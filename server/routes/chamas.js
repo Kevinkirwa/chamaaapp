@@ -3,11 +3,195 @@ import Chama from '../models/Chama.js';
 import Contribution from '../models/Contribution.js';
 import Payout from '../models/Payout.js';
 import User from '../models/User.js';
+import Message from '../models/Message.js';
 import { authenticateToken, validateChamaAccess } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Create a new chama (restricted to approved users)
+// Request verification to create Chamas with document upload
+router.post('/request-verification', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { 
+      nationalId, 
+      fullName, 
+      dateOfBirth, 
+      placeOfBirth,
+      idFrontPhoto, 
+      idBackPhoto, 
+      selfiePhoto 
+    } = req.body;
+
+    const user = await User.findById(userId);
+
+    if (user.canCreateChama()) {
+      return res.status(400).json({
+        success: false,
+        message: 'You already have permission to create Chamas'
+      });
+    }
+
+    if (user.verificationRequest.status === 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: 'Your verification request is already pending approval'
+      });
+    }
+
+    // Validate required fields
+    if (!nationalId || !fullName || !dateOfBirth || !placeOfBirth) {
+      return res.status(400).json({
+        success: false,
+        message: 'All personal details are required (National ID, Full Name, Date of Birth, Place of Birth)'
+      });
+    }
+
+    // Validate National ID format (8 digits)
+    if (!/^\d{8}$/.test(nationalId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid 8-digit Kenya National ID number'
+      });
+    }
+
+    // Validate documents
+    if (!idFrontPhoto || !idBackPhoto || !selfiePhoto) {
+      return res.status(400).json({
+        success: false,
+        message: 'All documents are required (ID Front Photo, ID Back Photo, Selfie Photo)'
+      });
+    }
+
+    // Check if National ID is already used by another user
+    const existingUser = await User.findOne({
+      'verificationRequest.nationalId.idNumber': nationalId,
+      _id: { $ne: userId }
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'This National ID number is already registered with another account'
+      });
+    }
+
+    // Update verification request with documents
+    user.verificationRequest = {
+      status: 'pending',
+      requestedAt: new Date(),
+      approvedBy: null,
+      approvedAt: null,
+      rejectionReason: null,
+      nationalId: {
+        idNumber: nationalId,
+        fullName: fullName.trim(),
+        dateOfBirth: new Date(dateOfBirth),
+        placeOfBirth: placeOfBirth.trim()
+      },
+      documents: {
+        idFrontPhoto: idFrontPhoto, // Base64 encoded image
+        idBackPhoto: idBackPhoto,   // Base64 encoded image
+        selfiePhoto: selfiePhoto,   // Base64 encoded image
+        uploadedAt: new Date()
+      },
+      phoneVerification: {
+        isPhoneRegisteredWithId: false, // To be verified by admin
+        phoneOwnerName: null,
+        verificationMethod: 'document_review'
+      },
+      adminNotes: null,
+      riskAssessment: {
+        score: 0,
+        factors: [],
+        assessedBy: null,
+        assessedAt: null
+      }
+    };
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Verification request with documents submitted successfully. An admin will review your documents and verify your identity.',
+      verificationProgress: user.getVerificationProgress()
+    });
+  } catch (error) {
+    console.error('Error requesting verification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error processing verification request'
+    });
+  }
+});
+
+// Get verification status with progress
+router.get('/verification-status', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    res.json({
+      success: true,
+      canCreateChamas: user.canCreateChama(),
+      verificationRequest: user.verificationRequest,
+      verificationProgress: user.getVerificationProgress(),
+      hasCompleteDocuments: user.hasCompleteDocuments(),
+      role: user.role
+    });
+  } catch (error) {
+    console.error('Error fetching verification status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching verification status'
+    });
+  }
+});
+
+// Update verification documents
+router.patch('/verification-documents', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { idFrontPhoto, idBackPhoto, selfiePhoto } = req.body;
+
+    const user = await User.findById(userId);
+
+    if (user.verificationRequest.status === 'approved') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot update documents for approved verification'
+      });
+    }
+
+    // Update documents
+    if (idFrontPhoto) user.verificationRequest.documents.idFrontPhoto = idFrontPhoto;
+    if (idBackPhoto) user.verificationRequest.documents.idBackPhoto = idBackPhoto;
+    if (selfiePhoto) user.verificationRequest.documents.selfiePhoto = selfiePhoto;
+    
+    user.verificationRequest.documents.uploadedAt = new Date();
+
+    // If status was rejected, reset to pending
+    if (user.verificationRequest.status === 'rejected') {
+      user.verificationRequest.status = 'pending';
+      user.verificationRequest.requestedAt = new Date();
+      user.verificationRequest.rejectionReason = null;
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Documents updated successfully',
+      verificationProgress: user.getVerificationProgress()
+    });
+  } catch (error) {
+    console.error('Error updating documents:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error updating documents'
+    });
+  }
+});
+
+// Create a new chama (restricted to verified users)
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { name, description, contributionAmount } = req.body;
@@ -18,7 +202,16 @@ router.post('/', authenticateToken, async (req, res) => {
     if (!user.canCreateChama()) {
       return res.status(403).json({
         success: false,
-        message: 'You need approval to create Chamas. Please request verification from an admin.',
+        message: 'You need verification with valid Kenya National ID documents to create Chamas. Please submit your verification request.',
+        requiresVerification: true
+      });
+    }
+
+    // Additional security check - ensure user is properly verified
+    if (!user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account is not verified. Please complete the verification process with valid documents.',
         requiresVerification: true
       });
     }
@@ -64,7 +257,8 @@ router.post('/', authenticateToken, async (req, res) => {
       members: [{
         user: adminId,
         payoutOrder: 1,
-        hasReceived: false
+        hasReceived: false,
+        receivingPhone: user.phone // Use admin's phone as default
       }]
     });
 
@@ -78,6 +272,15 @@ router.post('/', authenticateToken, async (req, res) => {
       user.canCreateChamas = true;
       await user.save();
     }
+
+    // Send welcome message
+    const welcomeMessage = new Message({
+      chama: chama._id,
+      sender: adminId,
+      content: `Welcome to ${chama.name}! 🎉 This is your group chat. Share updates, coordinate payments, and stay connected!`,
+      messageType: 'system'
+    });
+    await welcomeMessage.save();
 
     res.status(201).json({
       success: true,
@@ -102,66 +305,295 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Request verification to create Chamas
-router.post('/request-verification', authenticateToken, async (req, res) => {
+// Join chama by invite code
+router.post('/join', authenticateToken, async (req, res) => {
   try {
+    const { inviteCode, receivingPhone } = req.body;
     const userId = req.user._id;
-    const user = await User.findById(userId);
 
-    if (user.canCreateChama()) {
+    if (!inviteCode) {
       return res.status(400).json({
         success: false,
-        message: 'You already have permission to create Chamas'
+        message: 'Invite code is required'
       });
     }
 
-    if (user.verificationRequest.status === 'pending') {
+    if (!receivingPhone) {
       return res.status(400).json({
         success: false,
-        message: 'Your verification request is already pending approval'
+        message: 'Phone number for receiving payments is required'
       });
     }
 
-    // Update verification request
-    user.verificationRequest = {
-      status: 'pending',
-      requestedAt: new Date(),
-      approvedBy: null,
-      approvedAt: null,
-      rejectionReason: null
-    };
+    // Format phone number
+    let formattedPhone = receivingPhone.toString().trim();
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '254' + formattedPhone.slice(1);
+    } else if (formattedPhone.startsWith('+254')) {
+      formattedPhone = formattedPhone.slice(1);
+    } else if (!formattedPhone.startsWith('254')) {
+      formattedPhone = '254' + formattedPhone;
+    }
 
-    await user.save();
+    // Validate phone number format
+    if (!/^254\d{9}$/.test(formattedPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid Kenyan phone number (e.g., 0712345678)'
+      });
+    }
+
+    const chama = await Chama.findOne({ 
+      inviteCode: inviteCode.toUpperCase(),
+      status: 'active'
+    });
+
+    if (!chama) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invalid invite code or chama not found'
+      });
+    }
+
+    // Check if user is already a member
+    const existingMember = chama.members.find(member => 
+      member.user.toString() === userId.toString()
+    );
+
+    if (existingMember) {
+      return res.status(400).json({
+        success: false,
+        message: 'You are already a member of this chama'
+      });
+    }
+
+    // Check if ordering is finalized
+    if (chama.isOrderingFinalized) {
+      return res.status(400).json({
+        success: false,
+        message: 'This chama has already started and ordering is finalized. Cannot join now.'
+      });
+    }
+
+    // Add member with temporary payout order (will be randomized later)
+    const nextPayoutOrder = chama.members.length + 1;
+    chama.members.push({
+      user: userId,
+      payoutOrder: nextPayoutOrder,
+      hasReceived: false,
+      receivingPhone: formattedPhone
+    });
+
+    await chama.save();
+    await chama.populate('admin', 'name email phone');
+    await chama.populate('members.user', 'name email phone');
+
+    // Send join notification message
+    const joinMessage = new Message({
+      chama: chama._id,
+      sender: userId,
+      content: `${req.user.name} joined the group! 👋`,
+      messageType: 'system'
+    });
+    await joinMessage.save();
 
     res.json({
       success: true,
-      message: 'Verification request submitted successfully. An admin will review your request.'
+      message: 'Successfully joined chama',
+      chama
     });
   } catch (error) {
-    console.error('Error requesting verification:', error);
+    console.error('Error joining chama:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error processing verification request'
+      message: 'Server error joining chama'
     });
   }
 });
 
-// Get verification status
-router.get('/verification-status', authenticateToken, async (req, res) => {
+// Finalize member ordering (admin only)
+router.post('/:chamaId/finalize-ordering', authenticateToken, validateChamaAccess, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
-    
+    if (!req.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only chama admin can finalize ordering'
+      });
+    }
+
+    const chama = req.chama;
+
+    if (chama.isOrderingFinalized) {
+      return res.status(400).json({
+        success: false,
+        message: 'Ordering has already been finalized'
+      });
+    }
+
+    if (chama.members.length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Need at least 2 members to start the chama'
+      });
+    }
+
+    // Finalize ordering using the method
+    chama.finalizeOrdering();
+    await chama.save();
+
+    // Send ordering notification
+    const orderingMessage = new Message({
+      chama: chama._id,
+      sender: req.user._id,
+      content: `🎲 Member ordering has been finalized! The payout order has been randomly determined. Check your position in the Members tab.`,
+      messageType: 'system'
+    });
+    await orderingMessage.save();
+
+    await chama.populate('admin', 'name email phone');
+    await chama.populate('members.user', 'name email phone');
+
     res.json({
       success: true,
-      canCreateChamas: user.canCreateChama(),
-      verificationRequest: user.verificationRequest,
-      role: user.role
+      message: 'Member ordering finalized successfully',
+      chama
     });
   } catch (error) {
-    console.error('Error fetching verification status:', error);
+    console.error('Error finalizing ordering:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error fetching verification status'
+      message: error.message || 'Server error finalizing ordering'
+    });
+  }
+});
+
+// Update receiving phone number
+router.patch('/:chamaId/update-phone', authenticateToken, validateChamaAccess, async (req, res) => {
+  try {
+    const { receivingPhone } = req.body;
+    const userId = req.user._id;
+    const chama = req.chama;
+
+    if (!receivingPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number is required'
+      });
+    }
+
+    // Format phone number
+    let formattedPhone = receivingPhone.toString().trim();
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '254' + formattedPhone.slice(1);
+    } else if (formattedPhone.startsWith('+254')) {
+      formattedPhone = formattedPhone.slice(1);
+    } else if (!formattedPhone.startsWith('254')) {
+      formattedPhone = '254' + formattedPhone;
+    }
+
+    // Validate phone number format
+    if (!/^254\d{9}$/.test(formattedPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid Kenyan phone number (e.g., 0712345678)'
+      });
+    }
+
+    // Find and update member's receiving phone
+    const member = chama.members.find(m => m.user.toString() === userId.toString());
+    if (!member) {
+      return res.status(404).json({
+        success: false,
+        message: 'You are not a member of this chama'
+      });
+    }
+
+    member.receivingPhone = formattedPhone;
+    await chama.save();
+
+    res.json({
+      success: true,
+      message: 'Receiving phone number updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating phone number:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error updating phone number'
+    });
+  }
+});
+
+// Get chama messages
+router.get('/:chamaId/messages', authenticateToken, validateChamaAccess, async (req, res) => {
+  try {
+    const { page = 1, limit = 50 } = req.query;
+    const skip = (page - 1) * limit;
+
+    const messages = await Message.find({ chama: req.chama._id })
+      .populate('sender', 'name email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Message.countDocuments({ chama: req.chama._id });
+
+    res.json({
+      success: true,
+      messages: messages.reverse(), // Reverse to show oldest first
+      pagination: {
+        current: parseInt(page),
+        pages: Math.ceil(total / limit),
+        total
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching messages:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching messages'
+    });
+  }
+});
+
+// Send message
+router.post('/:chamaId/messages', authenticateToken, validateChamaAccess, async (req, res) => {
+  try {
+    const { content } = req.body;
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message content is required'
+      });
+    }
+
+    if (content.length > 1000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message cannot exceed 1000 characters'
+      });
+    }
+
+    const message = new Message({
+      chama: req.chama._id,
+      sender: req.user._id,
+      content: content.trim(),
+      messageType: 'text'
+    });
+
+    await message.save();
+    await message.populate('sender', 'name email');
+
+    res.status(201).json({
+      success: true,
+      message
+    });
+  } catch (error) {
+    console.error('Error sending message:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error sending message'
     });
   }
 });
@@ -210,69 +642,6 @@ router.get('/my-chamas', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error fetching chamas'
-    });
-  }
-});
-
-// Join chama by invite code
-router.post('/join', authenticateToken, async (req, res) => {
-  try {
-    const { inviteCode } = req.body;
-    const userId = req.user._id;
-
-    if (!inviteCode) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invite code is required'
-      });
-    }
-
-    const chama = await Chama.findOne({ 
-      inviteCode: inviteCode.toUpperCase(),
-      status: 'active'
-    });
-
-    if (!chama) {
-      return res.status(404).json({
-        success: false,
-        message: 'Invalid invite code or chama not found'
-      });
-    }
-
-    // Check if user is already a member
-    const existingMember = chama.members.find(member => 
-      member.user.toString() === userId.toString()
-    );
-
-    if (existingMember) {
-      return res.status(400).json({
-        success: false,
-        message: 'You are already a member of this chama'
-      });
-    }
-
-    // Add member with next payout order
-    const nextPayoutOrder = chama.members.length + 1;
-    chama.members.push({
-      user: userId,
-      payoutOrder: nextPayoutOrder,
-      hasReceived: false
-    });
-
-    await chama.save();
-    await chama.populate('admin', 'name email phone');
-    await chama.populate('members.user', 'name email phone');
-
-    res.json({
-      success: true,
-      message: 'Successfully joined chama',
-      chama
-    });
-  } catch (error) {
-    console.error('Error joining chama:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error joining chama'
     });
   }
 });
@@ -382,6 +751,14 @@ router.delete('/:chamaId/members/:memberId', authenticateToken, validateChamaAcc
       return res.status(400).json({
         success: false,
         message: 'Cannot remove chama admin'
+      });
+    }
+
+    // Don't allow removing members if ordering is finalized
+    if (chama.isOrderingFinalized) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot remove members after ordering is finalized'
       });
     }
 

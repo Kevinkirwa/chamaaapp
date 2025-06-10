@@ -13,7 +13,12 @@ import {
   CheckCircle,
   XCircle,
   Phone,
-  Copy
+  Copy,
+  MessageCircle,
+  Send,
+  Shuffle,
+  AlertCircle,
+  Edit3
 } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -30,6 +35,7 @@ interface Member {
   hasReceived: boolean;
   joinedAt: string;
   totalContributed: number;
+  receivingPhone: string;
 }
 
 interface Contribution {
@@ -46,6 +52,18 @@ interface Contribution {
   cycle: number;
 }
 
+interface Message {
+  _id: string;
+  sender: {
+    _id: string;
+    name: string;
+    email: string;
+  };
+  content: string;
+  messageType: string;
+  createdAt: string;
+}
+
 interface ChamaData {
   _id: string;
   name: string;
@@ -53,6 +71,8 @@ interface ChamaData {
   contributionAmount: number;
   currentCycle: number;
   inviteCode: string;
+  isOrderingFinalized: boolean;
+  orderingDate?: string;
   admin: {
     _id: string;
     name: string;
@@ -68,14 +88,20 @@ const ChamaDetails: React.FC = () => {
   const { user } = useAuth();
   const [chama, setChama] = useState<ChamaData | null>(null);
   const [contributions, setContributions] = useState<Contribution[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [contributionLoading, setContributionLoading] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState(user?.phone || '');
-  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'contributions'>('overview');
+  const [receivingPhone, setReceivingPhone] = useState('');
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [newMessage, setNewMessage] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'contributions' | 'chat'>('overview');
 
   useEffect(() => {
     if (chamaId) {
       fetchChamaDetails();
+      fetchMessages();
     }
   }, [chamaId]);
 
@@ -85,12 +111,31 @@ const ChamaDetails: React.FC = () => {
       if (response.data.success) {
         setChama(response.data.chama);
         setContributions(response.data.contributions);
+        
+        // Set user's receiving phone
+        const currentUserMember = response.data.chama.members.find(
+          (m: Member) => m.user._id === user?._id
+        );
+        if (currentUserMember) {
+          setReceivingPhone(currentUserMember.receivingPhone);
+        }
       }
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to fetch chama details');
       navigate('/dashboard');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchMessages = async () => {
+    try {
+      const response = await axios.get(`/api/chamas/${chamaId}/messages`);
+      if (response.data.success) {
+        setMessages(response.data.messages);
+      }
+    } catch (error: any) {
+      console.error('Error fetching messages:', error);
     }
   };
 
@@ -115,6 +160,60 @@ const ChamaDetails: React.FC = () => {
       toast.error(error.response?.data?.message || 'Failed to initiate contribution');
     } finally {
       setContributionLoading(false);
+    }
+  };
+
+  const handleFinalizeOrdering = async () => {
+    try {
+      const response = await axios.post(`/api/chamas/${chamaId}/finalize-ordering`);
+      if (response.data.success) {
+        toast.success('Member ordering finalized! The chama has officially started.');
+        fetchChamaDetails();
+        fetchMessages();
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to finalize ordering');
+    }
+  };
+
+  const handleUpdateReceivingPhone = async () => {
+    if (!receivingPhone) {
+      toast.error('Please enter a phone number');
+      return;
+    }
+
+    try {
+      const response = await axios.patch(`/api/chamas/${chamaId}/update-phone`, {
+        receivingPhone
+      });
+
+      if (response.data.success) {
+        toast.success('Receiving phone number updated successfully');
+        setEditingPhone(false);
+        fetchChamaDetails();
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to update phone number');
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!newMessage.trim()) return;
+
+    setSendingMessage(true);
+    try {
+      const response = await axios.post(`/api/chamas/${chamaId}/messages`, {
+        content: newMessage.trim()
+      });
+
+      if (response.data.success) {
+        setMessages(prev => [...prev, response.data.message]);
+        setNewMessage('');
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to send message');
+    } finally {
+      setSendingMessage(false);
     }
   };
 
@@ -181,6 +280,15 @@ const ChamaDetails: React.FC = () => {
         
         {chama.isAdmin && (
           <div className="flex space-x-3">
+            {!chama.isOrderingFinalized && (
+              <button
+                onClick={handleFinalizeOrdering}
+                className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
+              >
+                <Shuffle className="w-4 h-4" />
+                <span>Start Chama</span>
+              </button>
+            )}
             <button
               onClick={shareInviteLink}
               className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -196,6 +304,29 @@ const ChamaDetails: React.FC = () => {
         )}
       </div>
 
+      {/* Chama Status */}
+      {!chama.isOrderingFinalized && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
+          <div className="flex items-start space-x-3">
+            <AlertCircle className="w-6 h-6 text-yellow-600 mt-1" />
+            <div>
+              <h3 className="text-lg font-semibold text-yellow-800">Chama Not Started Yet</h3>
+              <p className="text-yellow-700 mt-1">
+                {chama.isAdmin 
+                  ? `You have ${chama.members.length} members. Click "Start Chama" to randomly assign payout order and begin contributions.`
+                  : 'Waiting for admin to start the chama and assign payout order.'
+                }
+              </p>
+              {chama.members.length < 2 && chama.isAdmin && (
+                <p className="text-yellow-600 text-sm mt-2">
+                  ⚠️ You need at least 2 members to start the chama.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Chama Info */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-start justify-between mb-6">
@@ -209,6 +340,11 @@ const ChamaDetails: React.FC = () => {
               <span className="text-sm text-gray-500">
                 Cycle: <span className="font-medium">{chama.currentCycle}</span>
               </span>
+              {chama.isOrderingFinalized && (
+                <span className="text-sm text-green-600 font-medium">
+                  ✅ Started {new Date(chama.orderingDate!).toLocaleDateString()}
+                </span>
+              )}
             </div>
           </div>
           
@@ -236,14 +372,63 @@ const ChamaDetails: React.FC = () => {
         </div>
       </div>
 
+      {/* Receiving Phone Number Setup */}
+      {currentUserMember && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Receiving Phone Number</h3>
+          <div className="flex items-center space-x-4">
+            {editingPhone ? (
+              <>
+                <div className="flex-1">
+                  <input
+                    type="tel"
+                    value={receivingPhone}
+                    onChange={(e) => setReceivingPhone(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    placeholder="254712345678"
+                  />
+                </div>
+                <button
+                  onClick={handleUpdateReceivingPhone}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setEditingPhone(false)}
+                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex-1">
+                  <p className="text-gray-600">When it's your turn, you'll receive money at:</p>
+                  <p className="text-lg font-mono font-bold text-gray-900">{receivingPhone}</p>
+                </div>
+                <button
+                  onClick={() => setEditingPhone(true)}
+                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Edit3 className="w-4 h-4" />
+                  <span>Edit</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Current Receiver */}
-      {currentReceiver && (
+      {currentReceiver && chama.isOrderingFinalized && (
         <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-xl p-6 border border-green-200">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold text-gray-900">Current Receiver</h3>
               <p className="text-gray-600">{currentReceiver.user.name}</p>
               <p className="text-sm text-gray-500">{currentReceiver.user.email}</p>
+              <p className="text-sm text-gray-500">Will receive at: {currentReceiver.receivingPhone}</p>
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-600">Expected Amount</p>
@@ -256,13 +441,13 @@ const ChamaDetails: React.FC = () => {
       )}
 
       {/* Contribution Section */}
-      {!hasContributedThisCycle && currentUserMember && (
+      {!hasContributedThisCycle && currentUserMember && chama.isOrderingFinalized && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Make Your Contribution</h3>
           <div className="flex items-end space-x-4">
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Phone Number for M-PESA
+                Phone Number for M-PESA Payment
               </label>
               <div className="relative">
                 <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -293,7 +478,8 @@ const ChamaDetails: React.FC = () => {
           {[
             { id: 'overview', label: 'Overview' },
             { id: 'members', label: 'Members' },
-            { id: 'contributions', label: 'Contributions' }
+            { id: 'contributions', label: 'Contributions' },
+            { id: 'chat', label: 'Group Chat' }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -305,6 +491,7 @@ const ChamaDetails: React.FC = () => {
               }`}
             >
               {tab.label}
+              {tab.id === 'chat' && <MessageCircle className="w-4 h-4 inline ml-1" />}
             </button>
           ))}
         </nav>
@@ -355,18 +542,32 @@ const ChamaDetails: React.FC = () => {
 
       {activeTab === 'members' && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-6">Members ({chama.members.length})</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-6">
+            Members ({chama.members.length})
+            {chama.isOrderingFinalized && (
+              <span className="text-sm font-normal text-green-600 ml-2">
+                ✅ Payout order finalized
+              </span>
+            )}
+          </h3>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {chama.members.map((member) => (
+            {chama.members
+              .sort((a, b) => a.payoutOrder - b.payoutOrder)
+              .map((member) => (
               <div key={member.user._id} className="p-4 border border-gray-200 rounded-lg">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-medium text-gray-900">{member.user.name}</h4>
-                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                    Order #{member.payoutOrder}
+                  <span className={`text-xs px-2 py-1 rounded-full ${
+                    chama.isOrderingFinalized 
+                      ? 'bg-blue-100 text-blue-800' 
+                      : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {chama.isOrderingFinalized ? `#${member.payoutOrder}` : 'Pending'}
                   </span>
                 </div>
                 <p className="text-sm text-gray-600">{member.user.email}</p>
-                <p className="text-sm text-gray-600">{member.user.phone}</p>
+                <p className="text-sm text-gray-600">Login: {member.user.phone}</p>
+                <p className="text-sm text-gray-600">Receives: {member.receivingPhone}</p>
                 <div className="mt-2 flex items-center justify-between">
                   <span className="text-xs text-gray-500">
                     Joined {new Date(member.joinedAt).toLocaleDateString()}
@@ -416,6 +617,65 @@ const ChamaDetails: React.FC = () => {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'chat' && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-6">Group Chat</h3>
+          
+          {/* Messages */}
+          <div className="h-96 overflow-y-auto border border-gray-200 rounded-lg p-4 mb-4 space-y-3">
+            {messages.map((message) => (
+              <div key={message._id} className={`flex ${
+                message.sender._id === user?._id ? 'justify-end' : 'justify-start'
+              }`}>
+                <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                  message.messageType === 'system' 
+                    ? 'bg-blue-100 text-blue-800 text-center w-full'
+                    : message.sender._id === user?._id
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gray-200 text-gray-900'
+                }`}>
+                  {message.messageType !== 'system' && message.sender._id !== user?._id && (
+                    <p className="text-xs font-medium mb-1">{message.sender.name}</p>
+                  )}
+                  <p className="text-sm">{message.content}</p>
+                  <p className={`text-xs mt-1 ${
+                    message.messageType === 'system' 
+                      ? 'text-blue-600'
+                      : message.sender._id === user?._id 
+                      ? 'text-green-200' 
+                      : 'text-gray-500'
+                  }`}>
+                    {new Date(message.createdAt).toLocaleTimeString()}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Send Message */}
+          <div className="flex space-x-3">
+            <input
+              type="text"
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="Type your message..."
+              maxLength={1000}
+              disabled={sendingMessage}
+            />
+            <button
+              onClick={handleSendMessage}
+              disabled={sendingMessage || !newMessage.trim()}
+              className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <Send className="w-4 h-4" />
+              <span>{sendingMessage ? 'Sending...' : 'Send'}</span>
+            </button>
           </div>
         </div>
       )}

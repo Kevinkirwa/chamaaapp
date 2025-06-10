@@ -15,7 +15,12 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
-  Clock
+  Clock,
+  FileText,
+  Phone,
+  User,
+  MapPin,
+  Camera
 } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -29,7 +34,10 @@ interface SystemOverview {
   totalPayoutAmount: number;
   systemBalance: number;
   pendingVerifications: number;
+  verifiedUsers: number;
+  verificationRate: number;
   roleDistribution: Array<{ _id: string; count: number }>;
+  verificationStats: Array<{ _id: string; count: number }>;
 }
 
 interface User {
@@ -46,6 +54,27 @@ interface User {
     status: string;
     requestedAt?: string;
     rejectionReason?: string;
+    nationalId?: {
+      idNumber: string;
+      fullName: string;
+      dateOfBirth: string;
+      placeOfBirth: string;
+    };
+    documents?: {
+      idFrontPhoto: string;
+      idBackPhoto: string;
+      selfiePhoto: string;
+      uploadedAt: string;
+    };
+    phoneVerification?: {
+      isPhoneRegisteredWithId: boolean;
+      phoneOwnerName?: string;
+    };
+    adminNotes?: string;
+    riskAssessment?: {
+      score: number;
+      factors: Array<{ factor: string; score: number; description: string }>;
+    };
   };
   stats: {
     chamasAsAdmin: number;
@@ -53,6 +82,7 @@ interface User {
     totalContributions: number;
     totalPayouts: number;
   };
+  verificationProgress: number;
 }
 
 interface VerificationRequest {
@@ -63,7 +93,20 @@ interface VerificationRequest {
   verificationRequest: {
     status: string;
     requestedAt: string;
+    nationalId: {
+      idNumber: string;
+      fullName: string;
+      dateOfBirth: string;
+      placeOfBirth: string;
+    };
+    documents: {
+      idFrontPhoto: string;
+      idBackPhoto: string;
+      selfiePhoto: string;
+      uploadedAt: string;
+    };
   };
+  verificationProgress: number;
 }
 
 interface Chama {
@@ -89,11 +132,18 @@ const SuperAdminDashboard: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [chamas, setChamas] = useState<Chama[]>([]);
   const [verificationRequests, setVerificationRequests] = useState<VerificationRequest[]>([]);
+  const [selectedVerification, setSelectedVerification] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'chamas' | 'verifications'>('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [reviewData, setReviewData] = useState({
+    adminNotes: '',
+    riskScore: 50,
+    phoneVerified: false,
+    phoneOwnerName: ''
+  });
 
   useEffect(() => {
     fetchOverview();
@@ -163,17 +213,42 @@ const SuperAdminDashboard: React.FC = () => {
     }
   };
 
+  const fetchVerificationDetails = async (userId: string) => {
+    try {
+      const response = await axios.get(`/api/admin/verification-requests/${userId}`);
+      if (response.data.success) {
+        setSelectedVerification(response.data.user);
+        // Pre-fill review data
+        const verification = response.data.user.verificationRequest;
+        setReviewData({
+          adminNotes: verification.adminNotes || '',
+          riskScore: verification.riskAssessment?.score || 50,
+          phoneVerified: verification.phoneVerification?.isPhoneRegisteredWithId || false,
+          phoneOwnerName: verification.phoneVerification?.phoneOwnerName || ''
+        });
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to fetch verification details');
+    }
+  };
+
   const handleVerificationRequest = async (userId: string, action: 'approve' | 'reject', rejectionReason?: string) => {
     try {
       const response = await axios.patch(`/api/admin/verification-requests/${userId}`, {
         action,
-        rejectionReason
+        rejectionReason,
+        adminNotes: reviewData.adminNotes,
+        riskScore: reviewData.riskScore,
+        riskFactors: [], // Could be expanded to include detailed risk factors
+        phoneVerified: reviewData.phoneVerified,
+        phoneOwnerName: reviewData.phoneOwnerName
       });
 
       if (response.data.success) {
         toast.success(`Verification request ${action}d successfully`);
         fetchVerificationRequests();
         fetchOverview();
+        setSelectedVerification(null);
       }
     } catch (error: any) {
       toast.error(error.response?.data?.message || `Failed to ${action} verification request`);
@@ -255,7 +330,7 @@ const SuperAdminDashboard: React.FC = () => {
             <Shield className="w-8 h-8 text-green-600" />
             <span>Super Admin Dashboard</span>
           </h1>
-          <p className="text-gray-600 mt-2">Manage the entire M-Chama system</p>
+          <p className="text-gray-600 mt-2">Manage the entire M-Chama system with document verification</p>
         </div>
       </div>
 
@@ -266,7 +341,7 @@ const SuperAdminDashboard: React.FC = () => {
             { id: 'overview', label: 'Overview', icon: BarChart3 },
             { id: 'users', label: 'Users', icon: Users },
             { id: 'chamas', label: 'Chamas', icon: Building2 },
-            { id: 'verifications', label: `Verifications ${overview?.pendingVerifications ? `(${overview.pendingVerifications})` : ''}`, icon: Shield }
+            { id: 'verifications', label: `ID Verifications ${overview?.pendingVerifications ? `(${overview.pendingVerifications})` : ''}`, icon: Shield }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -294,6 +369,7 @@ const SuperAdminDashboard: React.FC = () => {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Users</p>
                   <p className="text-3xl font-bold text-gray-900">{overview.totalUsers}</p>
+                  <p className="text-sm text-gray-500">{overview.verificationRate}% verified</p>
                 </div>
                 <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
                   <Users className="w-6 h-6 text-blue-600" />
@@ -338,16 +414,32 @@ const SuperAdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Role Distribution */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">User Role Distribution</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {overview.roleDistribution.map((role) => (
-                <div key={role._id} className="text-center p-4 bg-gray-50 rounded-lg">
-                  <p className="text-2xl font-bold text-gray-900">{role.count}</p>
-                  <p className="text-sm text-gray-600 capitalize">{role._id.replace('_', ' ')}s</p>
-                </div>
-              ))}
+          {/* Verification Statistics */}
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">User Role Distribution</h3>
+              <div className="grid grid-cols-2 gap-4">
+                {overview.roleDistribution.map((role) => (
+                  <div key={role._id} className="text-center p-4 bg-gray-50 rounded-lg">
+                    <p className="text-2xl font-bold text-gray-900">{role.count}</p>
+                    <p className="text-sm text-gray-600 capitalize">{role._id.replace('_', ' ')}s</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Verification Status</h3>
+              <div className="grid grid-cols-2 gap-4">
+                {overview.verificationStats.map((stat) => (
+                  <div key={stat._id} className="text-center p-4 bg-gray-50 rounded-lg">
+                    <p className="text-2xl font-bold text-gray-900">{stat.count}</p>
+                    <p className="text-sm text-gray-600 capitalize">
+                      {stat._id === 'none' ? 'Not Started' : stat._id}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -358,7 +450,7 @@ const SuperAdminDashboard: React.FC = () => {
         <div className="space-y-6">
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-6">
-              Pending Verification Requests ({verificationRequests.length})
+              ID Verification Requests ({verificationRequests.length})
             </h3>
             
             {verificationRequests.length === 0 ? (
@@ -371,31 +463,54 @@ const SuperAdminDashboard: React.FC = () => {
                 {verificationRequests.map((request) => (
                   <div key={request._id} className="border border-gray-200 rounded-lg p-4">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium text-gray-900">{request.name}</h4>
-                        <p className="text-sm text-gray-600">{request.email}</p>
-                        <p className="text-sm text-gray-600">{request.phone}</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Requested: {new Date(request.verificationRequest.requestedAt).toLocaleDateString()}
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-4">
+                          <div>
+                            <h4 className="font-medium text-gray-900">{request.name}</h4>
+                            <p className="text-sm text-gray-600">{request.email}</p>
+                            <p className="text-sm text-gray-600">{request.phone}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-medium text-gray-700">ID Number</p>
+                            <p className="text-lg font-mono font-bold text-gray-900">
+                              {request.verificationRequest.nationalId.idNumber}
+                            </p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-medium text-gray-700">Progress</p>
+                            <div className="w-16 h-16 relative">
+                              <svg className="w-16 h-16 transform -rotate-90" viewBox="0 0 36 36">
+                                <path
+                                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                  fill="none"
+                                  stroke="#e5e7eb"
+                                  strokeWidth="2"
+                                />
+                                <path
+                                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                  fill="none"
+                                  stroke="#10b981"
+                                  strokeWidth="2"
+                                  strokeDasharray={`${request.verificationProgress}, 100`}
+                                />
+                              </svg>
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="text-sm font-bold text-gray-900">{request.verificationProgress}%</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">
+                          Submitted: {new Date(request.verificationRequest.requestedAt).toLocaleDateString()}
                         </p>
                       </div>
                       <div className="flex space-x-2">
                         <button
-                          onClick={() => handleVerificationRequest(request._id, 'approve')}
-                          className="flex items-center space-x-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                          onClick={() => fetchVerificationDetails(request._id)}
+                          className="flex items-center space-x-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                         >
-                          <CheckCircle className="w-4 h-4" />
-                          <span>Approve</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            const reason = prompt('Rejection reason (optional):');
-                            handleVerificationRequest(request._id, 'reject', reason || undefined);
-                          }}
-                          className="flex items-center space-x-1 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                        >
-                          <XCircle className="w-4 h-4" />
-                          <span>Reject</span>
+                          <Eye className="w-4 h-4" />
+                          <span>Review</span>
                         </button>
                       </div>
                     </div>
@@ -403,6 +518,213 @@ const SuperAdminDashboard: React.FC = () => {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Verification Review Modal */}
+      {selectedVerification && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">ID Verification Review</h2>
+              <button
+                onClick={() => setSelectedVerification(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 grid md:grid-cols-2 gap-8">
+              {/* User Information */}
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Personal Information</h3>
+                  <div className="space-y-3">
+                    <div className="flex items-center space-x-3">
+                      <User className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-600">Full Name</p>
+                        <p className="font-medium">{selectedVerification.verificationRequest.nationalId?.fullName}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <FileText className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-600">National ID</p>
+                        <p className="font-mono font-bold">{selectedVerification.verificationRequest.nationalId?.idNumber}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <Calendar className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-600">Date of Birth</p>
+                        <p className="font-medium">
+                          {selectedVerification.verificationRequest.nationalId?.dateOfBirth ? 
+                            new Date(selectedVerification.verificationRequest.nationalId.dateOfBirth).toLocaleDateString() : 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <MapPin className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-600">Place of Birth</p>
+                        <p className="font-medium">{selectedVerification.verificationRequest.nationalId?.placeOfBirth}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <Phone className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-600">Phone Number</p>
+                        <p className="font-medium">{selectedVerification.phone}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Review Form */}
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Admin Review</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Phone Verification
+                      </label>
+                      <div className="flex items-center space-x-4">
+                        <label className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={reviewData.phoneVerified}
+                            onChange={(e) => setReviewData(prev => ({ ...prev, phoneVerified: e.target.checked }))}
+                            className="rounded border-gray-300 text-green-600 focus:ring-green-500"
+                          />
+                          <span className="ml-2 text-sm text-gray-700">Phone registered with this ID</span>
+                        </label>
+                      </div>
+                      {reviewData.phoneVerified && (
+                        <input
+                          type="text"
+                          value={reviewData.phoneOwnerName}
+                          onChange={(e) => setReviewData(prev => ({ ...prev, phoneOwnerName: e.target.value }))}
+                          className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                          placeholder="Phone owner name (if different)"
+                        />
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Risk Score: {reviewData.riskScore}
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={reviewData.riskScore}
+                        onChange={(e) => setReviewData(prev => ({ ...prev, riskScore: parseInt(e.target.value) }))}
+                        className="w-full"
+                      />
+                      <div className="flex justify-between text-xs text-gray-500 mt-1">
+                        <span>Low Risk</span>
+                        <span>High Risk</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Admin Notes
+                      </label>
+                      <textarea
+                        value={reviewData.adminNotes}
+                        onChange={(e) => setReviewData(prev => ({ ...prev, adminNotes: e.target.value }))}
+                        rows={4}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        placeholder="Add notes about the verification review..."
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Document Images */}
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Uploaded Documents</h3>
+                  
+                  {/* ID Front */}
+                  <div className="mb-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">National ID - Front</p>
+                    {selectedVerification.verificationRequest.documents?.idFrontPhoto ? (
+                      <img 
+                        src={selectedVerification.verificationRequest.documents.idFrontPhoto}
+                        alt="ID Front"
+                        className="w-full h-48 object-cover rounded-lg border border-gray-300"
+                      />
+                    ) : (
+                      <div className="w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center">
+                        <p className="text-gray-500">No image uploaded</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ID Back */}
+                  <div className="mb-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">National ID - Back</p>
+                    {selectedVerification.verificationRequest.documents?.idBackPhoto ? (
+                      <img 
+                        src={selectedVerification.verificationRequest.documents.idBackPhoto}
+                        alt="ID Back"
+                        className="w-full h-48 object-cover rounded-lg border border-gray-300"
+                      />
+                    ) : (
+                      <div className="w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center">
+                        <p className="text-gray-500">No image uploaded</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Selfie */}
+                  <div className="mb-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Selfie Photo</p>
+                    {selectedVerification.verificationRequest.documents?.selfiePhoto ? (
+                      <img 
+                        src={selectedVerification.verificationRequest.documents.selfiePhoto}
+                        alt="Selfie"
+                        className="w-full h-48 object-cover rounded-lg border border-gray-300"
+                      />
+                    ) : (
+                      <div className="w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center">
+                        <p className="text-gray-500">No image uploaded</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-end space-x-3 p-6 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  const reason = prompt('Rejection reason:');
+                  if (reason) {
+                    handleVerificationRequest(selectedVerification._id, 'reject', reason);
+                  }
+                }}
+                className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                <XCircle className="w-4 h-4" />
+                <span>Reject</span>
+              </button>
+              <button
+                onClick={() => handleVerificationRequest(selectedVerification._id, 'approve')}
+                className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>Approve</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -444,7 +766,7 @@ const SuperAdminDashboard: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Permissions</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Verification</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -477,14 +799,39 @@ const SuperAdminDashboard: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex flex-col space-y-1">
+                          <div className="flex items-center space-x-2">
+                            <div className="w-8 h-8 relative">
+                              <svg className="w-8 h-8 transform -rotate-90" viewBox="0 0 36 36">
+                                <path
+                                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                  fill="none"
+                                  stroke="#e5e7eb"
+                                  strokeWidth="3"
+                                />
+                                <path
+                                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                  fill="none"
+                                  stroke="#10b981"
+                                  strokeWidth="3"
+                                  strokeDasharray={`${user.verificationProgress}, 100`}
+                                />
+                              </svg>
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="text-xs font-bold text-gray-900">{user.verificationProgress}%</span>
+                              </div>
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded-full ${
+                              user.verificationRequest.status === 'approved' ? 'bg-green-100 text-green-800' :
+                              user.verificationRequest.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              user.verificationRequest.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {user.verificationRequest.status === 'none' ? 'Not Started' : user.verificationRequest.status}
+                            </span>
+                          </div>
                           {user.canCreateChamas && (
                             <span className="inline-flex px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
                               Can Create Chamas
-                            </span>
-                          )}
-                          {user.isVerified && (
-                            <span className="inline-flex px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
-                              Verified
                             </span>
                           )}
                         </div>

@@ -53,7 +53,7 @@ const userSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  // Verification details
+  // Enhanced verification details with document upload
   verificationRequest: {
     status: {
       type: String,
@@ -76,6 +76,93 @@ const userSchema = new mongoose.Schema({
     rejectionReason: {
       type: String,
       default: null
+    },
+    // Kenya National ID verification
+    nationalId: {
+      idNumber: {
+        type: String,
+        default: null,
+        match: [/^\d{8}$/, 'Please enter a valid 8-digit Kenya National ID number']
+      },
+      fullName: {
+        type: String,
+        default: null,
+        trim: true
+      },
+      dateOfBirth: {
+        type: Date,
+        default: null
+      },
+      placeOfBirth: {
+        type: String,
+        default: null,
+        trim: true
+      }
+    },
+    // Document uploads (stored as base64 or file paths)
+    documents: {
+      idFrontPhoto: {
+        type: String, // Base64 encoded image or file path
+        default: null
+      },
+      idBackPhoto: {
+        type: String, // Base64 encoded image or file path
+        default: null
+      },
+      selfiePhoto: {
+        type: String, // Base64 encoded image or file path
+        default: null
+      },
+      uploadedAt: {
+        type: Date,
+        default: null
+      }
+    },
+    // Phone number verification
+    phoneVerification: {
+      isPhoneRegisteredWithId: {
+        type: Boolean,
+        default: false
+      },
+      phoneOwnerName: {
+        type: String,
+        default: null,
+        trim: true
+      },
+      verificationMethod: {
+        type: String,
+        enum: ['manual_check', 'api_verification', 'document_review'],
+        default: 'document_review'
+      }
+    },
+    // Admin review notes
+    adminNotes: {
+      type: String,
+      default: null,
+      maxlength: [1000, 'Admin notes cannot exceed 1000 characters']
+    },
+    // Risk assessment
+    riskAssessment: {
+      score: {
+        type: Number,
+        min: 0,
+        max: 100,
+        default: 0
+      },
+      factors: [{
+        factor: String,
+        score: Number,
+        description: String
+      }],
+      assessedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null
+      },
+      assessedAt: {
+        type: Date,
+        default: null
+      }
     }
   }
 }, {
@@ -104,6 +191,31 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
 userSchema.methods.canCreateChama = function() {
   return this.canCreateChamas || 
          ['chama_creator', 'admin', 'super_admin'].includes(this.role);
+};
+
+// Validate ID documents completeness
+userSchema.methods.hasCompleteDocuments = function() {
+  const docs = this.verificationRequest.documents;
+  return docs.idFrontPhoto && docs.idBackPhoto && docs.selfiePhoto;
+};
+
+// Calculate verification completeness percentage
+userSchema.methods.getVerificationProgress = function() {
+  let progress = 0;
+  const verification = this.verificationRequest;
+  
+  // Basic info (20%)
+  if (verification.nationalId.idNumber) progress += 20;
+  
+  // Documents (60% - 20% each)
+  if (verification.documents.idFrontPhoto) progress += 20;
+  if (verification.documents.idBackPhoto) progress += 20;
+  if (verification.documents.selfiePhoto) progress += 20;
+  
+  // Phone verification (20%)
+  if (verification.phoneVerification.isPhoneRegisteredWithId) progress += 20;
+  
+  return progress;
 };
 
 // Remove password from JSON output

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Key, AlertCircle } from 'lucide-react';
+import { X, Key, AlertCircle, Phone } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -11,6 +11,7 @@ interface JoinChamaModalProps {
 
 const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [inviteCode, setInviteCode] = useState('');
+  const [receivingPhone, setReceivingPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
 
@@ -33,9 +34,16 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
       return;
     }
 
+    if (!receivingPhone.trim()) {
+      setError('Please enter your phone number for receiving payments');
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await axios.post('/api/chamas/join', {
-        inviteCode: inviteCode.toUpperCase().trim()
+        inviteCode: inviteCode.toUpperCase().trim(),
+        receivingPhone: receivingPhone.trim()
       });
 
       if (response.data.success) {
@@ -43,6 +51,7 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
         onSuccess();
         onClose();
         setInviteCode('');
+        setReceivingPhone('');
         setError('');
       }
     } catch (error: any) {
@@ -60,9 +69,15 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
     setInviteCode(value);
   };
 
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setError(''); // Clear error when user starts typing
+    setReceivingPhone(e.target.value);
+  };
+
   const handleClose = () => {
     if (!loading) {
       setInviteCode('');
+      setReceivingPhone('');
       setError('');
       onClose();
     }
@@ -87,7 +102,7 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
             <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
               <Key className="w-8 h-8 text-blue-600" />
             </div>
-            <p className="text-gray-600">Enter the invite code shared by your chama admin</p>
+            <p className="text-gray-600">Enter the invite code and your phone number for receiving payments</p>
           </div>
 
           {/* Error Display */}
@@ -123,6 +138,29 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
               </p>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Phone Number for Receiving Payments
+              </label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="tel"
+                  value={receivingPhone}
+                  onChange={handlePhoneChange}
+                  className={`w-full pl-10 pr-4 py-3 border rounded-lg focus:ring-2 focus:border-transparent transition-all ${
+                    error ? 'border-red-300 bg-red-50 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'
+                  }`}
+                  placeholder="0712345678 or 254712345678"
+                  required
+                  disabled={loading}
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                This number will be used to send you money when it's your turn to receive
+              </p>
+            </div>
+
             <div className="flex space-x-3">
               <button
                 type="button"
@@ -134,7 +172,7 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
               </button>
               <button
                 type="submit"
-                disabled={loading || inviteCode.length < 6}
+                disabled={loading || inviteCode.length < 6 || !receivingPhone.trim()}
                 className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 {loading ? (

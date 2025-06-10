@@ -76,8 +76,10 @@ router.post('/setup-super-admin', async (req, res) => {
 // Get verification requests (admin only)
 router.get('/verification-requests', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    const { status = 'pending' } = req.query;
+    
     const requests = await User.find({
-      'verificationRequest.status': 'pending'
+      'verificationRequest.status': status
     }).select('-password').sort({ 'verificationRequest.requestedAt': -1 });
 
     res.json({
@@ -93,11 +95,47 @@ router.get('/verification-requests', authenticateToken, requireAdmin, async (req
   }
 });
 
-// Approve/Reject verification request (admin only)
+// Get detailed verification request (admin only)
+router.get('/verification-requests/:userId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const user = await User.findById(userId).select('-password');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      user,
+      verificationProgress: user.getVerificationProgress(),
+      hasCompleteDocuments: user.hasCompleteDocuments()
+    });
+  } catch (error) {
+    console.error('Error fetching verification request details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching verification details'
+    });
+  }
+});
+
+// Approve/Reject verification request with detailed review (admin only)
 router.patch('/verification-requests/:userId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { action, rejectionReason } = req.body; // action: 'approve' or 'reject'
+    const { 
+      action, 
+      rejectionReason, 
+      adminNotes,
+      riskScore,
+      riskFactors,
+      phoneVerified,
+      phoneOwnerName
+    } = req.body;
 
     if (!['approve', 'reject'].includes(action)) {
       return res.status(400).json({
@@ -121,6 +159,14 @@ router.patch('/verification-requests/:userId', authenticateToken, requireAdmin, 
       });
     }
 
+    // Validate documents are complete before approval
+    if (action === 'approve' && !user.hasCompleteDocuments()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot approve: User has not uploaded all required documents (ID front, ID back, selfie)'
+      });
+    }
+
     if (action === 'approve') {
       user.verificationRequest.status = 'approved';
       user.verificationRequest.approvedBy = req.user._id;
@@ -128,13 +174,35 @@ router.patch('/verification-requests/:userId', authenticateToken, requireAdmin, 
       user.canCreateChamas = true;
       user.isVerified = true;
       
+      // Update phone verification if provided
+      if (phoneVerified !== undefined) {
+        user.verificationRequest.phoneVerification.isPhoneRegisteredWithId = phoneVerified;
+        user.verificationRequest.phoneVerification.phoneOwnerName = phoneOwnerName || null;
+        user.verificationRequest.phoneVerification.verificationMethod = 'manual_check';
+      }
+      
       // Optionally upgrade role to chama_creator
       if (user.role === 'member') {
         user.role = 'chama_creator';
       }
     } else {
       user.verificationRequest.status = 'rejected';
-      user.verificationRequest.rejectionReason = rejectionReason || 'No reason provided';
+      user.verificationRequest.rejectionReason = rejectionReason || 'Documents did not meet verification requirements';
+    }
+
+    // Add admin notes
+    if (adminNotes) {
+      user.verificationRequest.adminNotes = adminNotes;
+    }
+
+    // Add risk assessment
+    if (riskScore !== undefined) {
+      user.verificationRequest.riskAssessment = {
+        score: riskScore,
+        factors: riskFactors || [],
+        assessedBy: req.user._id,
+        assessedAt: new Date()
+      };
     }
 
     await user.save();
@@ -149,6 +217,37 @@ router.patch('/verification-requests/:userId', authenticateToken, requireAdmin, 
     res.status(500).json({
       success: false,
       message: 'Server error processing verification request'
+    });
+  }
+});
+
+// Update verification documents review (admin only)
+router.patch('/verification-requests/:userId/documents', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { documentReview } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Add document review notes
+    user.verificationRequest.adminNotes = documentReview;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Document review updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating document review:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error updating document review'
     });
   }
 });
@@ -239,6 +338,7 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
     const totalContributions = await Contribution.countDocuments({ status: 'completed' });
     const totalPayouts = await Payout.countDocuments({ status: 'completed' });
     const pendingVerifications = await User.countDocuments({ 'verificationRequest.status': 'pending' });
+    const verifiedUsers = await User.countDocuments({ isVerified: true });
 
     // Calculate total money in system
     const contributionSum = await Contribution.aggregate([
@@ -271,6 +371,11 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
       { $group: { _id: '$role', count: { $sum: 1 } } }
     ]);
 
+    // Get verification statistics
+    const verificationStats = await User.aggregate([
+      { $group: { _id: '$verificationRequest.status', count: { $sum: 1 } } }
+    ]);
+
     res.json({
       success: true,
       overview: {
@@ -282,7 +387,10 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
         totalPayoutAmount,
         systemBalance: totalContributionAmount - totalPayoutAmount,
         pendingVerifications,
-        roleDistribution
+        verifiedUsers,
+        verificationRate: totalUsers > 0 ? Math.round((verifiedUsers / totalUsers) * 100) : 0,
+        roleDistribution,
+        verificationStats
       },
       recentActivities: {
         recentChamas,
@@ -398,7 +506,7 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
       });
     }
 
-    const { page = 1, limit = 20, search = '', role = '' } = req.query;
+    const { page = 1, limit = 20, search = '', role = '', verified = '' } = req.query;
     const skip = (page - 1) * limit;
 
     let searchQuery = {};
@@ -407,12 +515,19 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
       searchQuery.$or = [
         { name: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } }
+        { phone: { $regex: search, $options: 'i' } },
+        { 'verificationRequest.nationalId.idNumber': { $regex: search, $options: 'i' } }
       ];
     }
 
     if (role) {
       searchQuery.role = role;
+    }
+
+    if (verified === 'true') {
+      searchQuery.isVerified = true;
+    } else if (verified === 'false') {
+      searchQuery.isVerified = false;
     }
 
     const users = await User.find(searchQuery)
@@ -437,7 +552,8 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
           chamasAsMember,
           totalContributions,
           totalPayouts
-        }
+        },
+        verificationProgress: user.getVerificationProgress()
       };
     }));
 

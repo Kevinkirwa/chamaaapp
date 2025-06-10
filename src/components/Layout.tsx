@@ -16,13 +16,20 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     return location.pathname === path || location.pathname.startsWith(path);
   };
 
+  const handleLogoClick = () => {
+    navigate('/dashboard');
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-3">
+            <div 
+              className="flex items-center space-x-3 cursor-pointer hover:opacity-80 transition-opacity"
+              onClick={handleLogoClick}
+            >
               <div className="w-8 h-8 bg-gradient-to-br from-green-600 to-green-700 rounded-lg flex items-center justify-center">
                 <Users className="w-5 h-5 text-white" />
               </div>

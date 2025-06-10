@@ -65,6 +65,12 @@ const chamaSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     },
+    // Member's receiving phone number (can be different from login phone)
+    receivingPhone: {
+      type: String,
+      required: true,
+      match: [/^254\d{9}$/, 'Please enter a valid Kenyan phone number']
+    },
     // Track member's contribution history
     totalContributed: {
       type: Number,
@@ -76,6 +82,20 @@ const chamaSchema = new mongoose.Schema({
       default: false
     }
   }],
+  // Fair ordering system - randomized when chama starts
+  orderingMethod: {
+    type: String,
+    enum: ['random', 'first_come_first_serve', 'admin_decided'],
+    default: 'random'
+  },
+  orderingDate: {
+    type: Date,
+    default: null
+  },
+  isOrderingFinalized: {
+    type: Boolean,
+    default: false
+  },
   cycleStartDate: {
     type: Date,
     default: Date.now
@@ -93,6 +113,11 @@ const chamaSchema = new mongoose.Schema({
   completedCycles: {
     type: Number,
     default: 0
+  },
+  // Group chat settings
+  chatEnabled: {
+    type: Boolean,
+    default: true
   }
 }, {
   timestamps: true
@@ -105,6 +130,39 @@ chamaSchema.pre('save', function(next) {
   }
   next();
 });
+
+// Finalize member ordering (called when admin decides to start)
+chamaSchema.methods.finalizeOrdering = function() {
+  if (this.isOrderingFinalized) {
+    throw new Error('Ordering has already been finalized');
+  }
+
+  if (this.members.length < 2) {
+    throw new Error('Need at least 2 members to finalize ordering');
+  }
+
+  if (this.orderingMethod === 'random') {
+    // Shuffle members randomly for fair ordering
+    const shuffledMembers = [...this.members];
+    for (let i = shuffledMembers.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffledMembers[i], shuffledMembers[j]] = [shuffledMembers[j], shuffledMembers[i]];
+    }
+    
+    // Assign payout orders
+    shuffledMembers.forEach((member, index) => {
+      member.payoutOrder = index + 1;
+    });
+    
+    this.members = shuffledMembers;
+  }
+
+  this.isOrderingFinalized = true;
+  this.orderingDate = new Date();
+  this.currentReceiver = this.members.find(m => m.payoutOrder === 1)?.user;
+  
+  return this;
+};
 
 // Calculate next payout date (monthly)
 chamaSchema.methods.calculateNextPayoutDate = function() {
