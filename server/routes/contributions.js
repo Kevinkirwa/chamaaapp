@@ -6,7 +6,7 @@ import mpesaService from '../services/mpesaService.js';
 
 const router = express.Router();
 
-// Make a contribution
+// Make a contribution - ENHANCED VERSION
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { chamaId, phoneNumber } = req.body;
@@ -19,7 +19,7 @@ router.post('/', authenticateToken, async (req, res) => {
       });
     }
 
-    const chama = await Chama.findById(chamaId);
+    const chama = await Chama.findById(chamaId).populate('admin', 'name phone');
     if (!chama) {
       return res.status(404).json({
         success: false,
@@ -61,6 +61,32 @@ router.post('/', authenticateToken, async (req, res) => {
       formattedPhone = phoneNumber.slice(1);
     }
 
+    // ENHANCED: Check if this is the current receiver
+    const currentReceiver = chama.members.find(m => 
+      m.payoutOrder === chama.currentCycle && !m.hasReceived
+    );
+    const isCurrentReceiver = currentReceiver?.user.toString() === userId.toString();
+
+    // ENHANCED: Determine collection strategy
+    let collectionPhone = chama.admin.phone; // Default to admin's phone
+    let paymentNote = `Contribution to ${chama.name} - Cycle ${chama.currentCycle}`;
+    
+    if (isCurrentReceiver) {
+      // Special handling for current receiver
+      paymentNote = `Your contribution to ${chama.name} - Cycle ${chama.currentCycle} (You'll receive the full payout when everyone pays!)`;
+      
+      // Check if receiver is trying to pay to their own number
+      if (formattedPhone === member.receivingPhone) {
+        return res.status(400).json({
+          success: false,
+          message: `You cannot pay to your own phone number (${member.receivingPhone}). Your contribution will be collected by the admin (${chama.admin.phone}) and included in your payout.`,
+          isCurrentReceiver: true,
+          adminPhone: chama.admin.phone,
+          suggestion: `Your payment goes to admin ${chama.admin.name} at ${chama.admin.phone}, then you receive the full amount (KSh ${(chama.contributionAmount * chama.members.length).toLocaleString()}) at ${member.receivingPhone}`
+        });
+      }
+    }
+
     // Create contribution record
     const contribution = new Contribution({
       user: userId,
@@ -74,12 +100,13 @@ router.post('/', authenticateToken, async (req, res) => {
     await contribution.save();
 
     try {
-      // Initiate STK Push
+      // Initiate STK Push with enhanced collection logic
       const stkResponse = await mpesaService.initiateSTKPush(
         formattedPhone,
         chama.contributionAmount,
         `CHAMA-${chamaId}`,
-        `Contribution to ${chama.name} - Cycle ${chama.currentCycle}`
+        paymentNote,
+        chamaId // Pass chamaId for collection phone determination
       );
 
       // Update contribution with checkout request ID
@@ -94,9 +121,18 @@ router.post('/', authenticateToken, async (req, res) => {
 
       res.json({
         success: true,
-        message: 'STK Push initiated successfully. Please complete payment on your phone.',
+        message: isCurrentReceiver 
+          ? `STK Push sent! Your contribution will be collected by admin ${chama.admin.name}, then you'll receive the full payout.`
+          : 'STK Push initiated successfully. Please complete payment on your phone.',
         contribution: contribution.toJSON(),
-        checkoutRequestId: stkResponse.CheckoutRequestID
+        checkoutRequestId: stkResponse.CheckoutRequestID,
+        isCurrentReceiver,
+        collectionInfo: isCurrentReceiver ? {
+          adminName: chama.admin.name,
+          adminPhone: chama.admin.phone,
+          payoutAmount: chama.contributionAmount * chama.members.length,
+          payoutPhone: member.receivingPhone
+        } : null
       });
     } catch (mpesaError) {
       // Update contribution status to failed

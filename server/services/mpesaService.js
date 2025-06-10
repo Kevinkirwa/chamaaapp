@@ -61,7 +61,25 @@ class MPESAService {
     return { password, timestamp };
   }
 
-  async initiateSTKPush(phoneNumber, amount, accountReference, transactionDesc) {
+  // ENHANCED: Get collection phone number (admin's phone or business number)
+  async getCollectionPhoneNumber(chamaId) {
+    try {
+      const chama = await Chama.findById(chamaId).populate('admin', 'phone');
+      
+      if (!chama) {
+        throw new Error('Chama not found');
+      }
+
+      // For now, use admin's phone as collection point
+      // In production, this would be a dedicated business number
+      return chama.admin.phone;
+    } catch (error) {
+      console.error('Error getting collection phone number:', error);
+      throw error;
+    }
+  }
+
+  async initiateSTKPush(phoneNumber, amount, accountReference, transactionDesc, chamaId = null) {
     try {
       const accessToken = await this.getAccessToken();
       const { password, timestamp } = this.generatePassword();
@@ -76,6 +94,20 @@ class MPESAService {
         formattedPhone = '254' + phoneNumber;
       }
 
+      // ENHANCED: Determine collection phone number
+      let collectionPhone = this.shortcode; // Default to business shortcode
+      
+      if (chamaId) {
+        try {
+          // Use admin's phone as collection point for this Chama
+          collectionPhone = await this.getCollectionPhoneNumber(chamaId);
+          console.log(`📱 Using admin phone ${collectionPhone} as collection point for Chama ${chamaId}`);
+        } catch (error) {
+          console.log('⚠️ Could not get admin phone, using business shortcode');
+          collectionPhone = this.shortcode;
+        }
+      }
+
       const requestData = {
         BusinessShortCode: this.shortcode,
         Password: password,
@@ -83,7 +115,7 @@ class MPESAService {
         TransactionType: 'CustomerPayBillOnline',
         Amount: Math.round(amount),
         PartyA: formattedPhone,
-        PartyB: this.shortcode,
+        PartyB: collectionPhone, // FIXED: Use collection phone instead of shortcode
         PhoneNumber: formattedPhone,
         CallBackURL: `${this.callbackUrl}/contribution`,
         AccountReference: accountReference,
@@ -91,7 +123,8 @@ class MPESAService {
       };
 
       console.log('📤 Initiating STK Push:', {
-        phone: formattedPhone,
+        from: formattedPhone,
+        to: collectionPhone,
         amount: Math.round(amount),
         reference: accountReference
       });
@@ -239,7 +272,7 @@ class MPESAService {
         if (currentReceiver && currentReceiver.user) {
           const totalAmount = chama.contributionAmount * chama.members.length;
           
-          console.log(`💰 Processing payout of KSh ${totalAmount} to ${currentReceiver.user.name} (${currentReceiver.user.phone})`);
+          console.log(`💰 Processing payout of KSh ${totalAmount} to ${currentReceiver.user.name} (${currentReceiver.receivingPhone})`);
           
           // Create payout record
           const payout = new Payout({
@@ -247,7 +280,7 @@ class MPESAService {
             recipient: currentReceiver.user._id,
             cycle: cycle,
             amount: totalAmount,
-            phoneNumber: currentReceiver.user.phone,
+            phoneNumber: currentReceiver.receivingPhone, // Use receiving phone, not login phone
             status: 'processing'
           });
 
@@ -257,7 +290,7 @@ class MPESAService {
           try {
             if (process.env.NODE_ENV === 'production') {
               const payoutResponse = await this.initiatePayout(
-                currentReceiver.user.phone,
+                currentReceiver.receivingPhone, // Use receiving phone
                 totalAmount,
                 `CHAMA-${chamaId}-CYCLE-${cycle}`,
                 `Payout for ${chama.name} - Cycle ${cycle}`
