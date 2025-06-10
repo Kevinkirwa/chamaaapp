@@ -18,7 +18,8 @@ import {
   Send,
   Shuffle,
   AlertCircle,
-  Edit3
+  Edit3,
+  Bell
 } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -91,6 +92,7 @@ const ChamaDetails: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [contributionLoading, setContributionLoading] = useState(false);
+  const [finalizeLoading, setFinalizeLoading] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState(user?.phone || '');
   const [receivingPhone, setReceivingPhone] = useState('');
   const [editingPhone, setEditingPhone] = useState(false);
@@ -164,15 +166,32 @@ const ChamaDetails: React.FC = () => {
   };
 
   const handleFinalizeOrdering = async () => {
+    if (!chama) return;
+
+    // Check if all members have receiving phone numbers
+    const membersWithoutPhone = chama.members.filter(member => !member.receivingPhone);
+    
+    if (membersWithoutPhone.length > 0) {
+      const memberNames = membersWithoutPhone.map(m => m.user.name).join(', ');
+      const confirmMessage = `Some members (${memberNames}) haven't set their receiving phone numbers. We'll use their login phone numbers as default. They can update this later. Continue?`;
+      
+      if (!window.confirm(confirmMessage)) {
+        return;
+      }
+    }
+
+    setFinalizeLoading(true);
     try {
       const response = await axios.post(`/api/chamas/${chamaId}/finalize-ordering`);
       if (response.data.success) {
-        toast.success('Member ordering finalized! The chama has officially started.');
+        toast.success('Chama started successfully! Member ordering has been finalized.');
         fetchChamaDetails();
         fetchMessages();
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to finalize ordering');
+      toast.error(error.response?.data?.message || 'Failed to start chama');
+    } finally {
+      setFinalizeLoading(false);
     }
   };
 
@@ -191,6 +210,7 @@ const ChamaDetails: React.FC = () => {
         toast.success('Receiving phone number updated successfully');
         setEditingPhone(false);
         fetchChamaDetails();
+        fetchMessages(); // Refresh to see the update notification
       }
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to update phone number');
@@ -226,12 +246,12 @@ const ChamaDetails: React.FC = () => {
 
   const shareInviteLink = () => {
     if (chama) {
-      const message = `Join my Chama "${chama.name}" on M-Chama! Use invite code: ${chama.inviteCode}`;
+      const message = `Join my Chama "${chama.name}" on M-Chama! Use invite code: ${chama.inviteCode}\n\nVisit: https://dainty-kitten-f03bb6.netlify.app`;
       if (navigator.share) {
         navigator.share({
           title: 'Join My Chama',
           text: message,
-          url: window.location.origin
+          url: 'https://dainty-kitten-f03bb6.netlify.app'
         });
       } else {
         navigator.clipboard.writeText(message);
@@ -283,10 +303,11 @@ const ChamaDetails: React.FC = () => {
             {!chama.isOrderingFinalized && (
               <button
                 onClick={handleFinalizeOrdering}
-                className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
+                disabled={finalizeLoading || chama.members.length < 2}
+                className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <Shuffle className="w-4 h-4" />
-                <span>Start Chama</span>
+                <span>{finalizeLoading ? 'Starting...' : 'Start Chama'}</span>
               </button>
             )}
             <button
@@ -321,6 +342,20 @@ const ChamaDetails: React.FC = () => {
                 <p className="text-yellow-600 text-sm mt-2">
                   ⚠️ You need at least 2 members to start the chama.
                 </p>
+              )}
+              {chama.isAdmin && (
+                <div className="mt-3">
+                  <p className="text-yellow-700 text-sm">
+                    <Bell className="w-4 h-4 inline mr-1" />
+                    When you start the chama:
+                  </p>
+                  <ul className="text-yellow-600 text-sm mt-1 ml-5 list-disc">
+                    <li>Members will be randomly assigned payout order</li>
+                    <li>First receiver will be notified</li>
+                    <li>All members can start making contributions</li>
+                    <li>Members without receiving phone numbers will use their login phone</li>
+                  </ul>
+                </div>
               )}
             </div>
           </div>
@@ -406,6 +441,9 @@ const ChamaDetails: React.FC = () => {
                 <div className="flex-1">
                   <p className="text-gray-600">When it's your turn, you'll receive money at:</p>
                   <p className="text-lg font-mono font-bold text-gray-900">{receivingPhone}</p>
+                  {receivingPhone === user?.phone && (
+                    <p className="text-sm text-blue-600">📱 Using your login phone number</p>
+                  )}
                 </div>
                 <button
                   onClick={() => setEditingPhone(true)}
@@ -429,6 +467,11 @@ const ChamaDetails: React.FC = () => {
               <p className="text-gray-600">{currentReceiver.user.name}</p>
               <p className="text-sm text-gray-500">{currentReceiver.user.email}</p>
               <p className="text-sm text-gray-500">Will receive at: {currentReceiver.receivingPhone}</p>
+              {currentReceiver.user._id === user?._id && (
+                <p className="text-sm font-medium text-green-600 mt-1">
+                  🎯 It's your turn! You'll receive the payout when everyone contributes.
+                </p>
+              )}
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-600">Expected Amount</p>
@@ -466,7 +509,7 @@ const ChamaDetails: React.FC = () => {
               className="flex items-center space-x-2 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
               <CreditCard className="w-5 h-5" />
-              <span>{contributionLoading ? 'Processing...' : `Pay KSh ${chama.contributionAmount}`}</span>
+              <span>{contributionLoading ? 'Processing...' : `Pay KSh ${chama.contributionAmount.toLocaleString()}`}</span>
             </button>
           </div>
         </div>
@@ -593,7 +636,7 @@ const ChamaDetails: React.FC = () => {
                 <div>
                   <p className="font-medium text-gray-900">{contribution.user.name}</p>
                   <p className="text-sm text-gray-500">
-                    Cycle {contribution.cycle} • KSh {contribution.amount} • {new Date(contribution.createdAt).toLocaleDateString()}
+                    Cycle {contribution.cycle} • KSh {contribution.amount.toLocaleString()} • {new Date(contribution.createdAt).toLocaleDateString()}
                   </p>
                   {contribution.mpesaCode && (
                     <p className="text-xs text-gray-500">M-PESA: {contribution.mpesaCode}</p>

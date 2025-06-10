@@ -66,10 +66,12 @@ const chamaSchema = new mongoose.Schema({
       default: Date.now
     },
     // Member's receiving phone number (can be different from login phone)
+    // FIXED: Made optional to handle existing members without this field
     receivingPhone: {
       type: String,
-      required: true,
-      match: [/^254\d{9}$/, 'Please enter a valid Kenyan phone number']
+      required: false, // Changed from true to false
+      match: [/^254\d{9}$/, 'Please enter a valid Kenyan phone number'],
+      default: null // Added default value
     },
     // Track member's contribution history
     totalContributed: {
@@ -129,6 +131,30 @@ chamaSchema.pre('save', function(next) {
     this.inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
   }
   next();
+});
+
+// Pre-save middleware to ensure existing members have receiving phone numbers
+chamaSchema.pre('save', async function(next) {
+  try {
+    // Check if we have members without receiving phone numbers
+    const membersNeedingPhone = this.members.filter(member => !member.receivingPhone);
+    
+    if (membersNeedingPhone.length > 0) {
+      // Populate user data to get their login phone numbers
+      await this.populate('members.user', 'phone');
+      
+      // Set default receiving phone to their login phone
+      for (let member of membersNeedingPhone) {
+        if (member.user && member.user.phone) {
+          member.receivingPhone = member.user.phone;
+        }
+      }
+    }
+    
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Finalize member ordering (called when admin decides to start)

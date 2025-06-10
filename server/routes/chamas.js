@@ -305,7 +305,7 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Join chama by invite code
+// Join chama by invite code - FIXED VERSION
 router.post('/join', authenticateToken, async (req, res) => {
   try {
     const { inviteCode, receivingPhone } = req.body;
@@ -375,43 +375,82 @@ router.post('/join', authenticateToken, async (req, res) => {
       });
     }
 
-    // Add member with temporary payout order (will be randomized later)
-    const nextPayoutOrder = chama.members.length + 1;
-    chama.members.push({
-      user: userId,
-      payoutOrder: nextPayoutOrder,
-      hasReceived: false,
-      receivingPhone: formattedPhone
-    });
+    // CRITICAL FIX: Ensure existing members have receiving phone numbers before adding new member
+    try {
+      // First, populate existing members to get their user data
+      await chama.populate('members.user', 'phone');
+      
+      // Check and fix existing members without receiving phone numbers
+      let membersFixed = 0;
+      for (let member of chama.members) {
+        if (!member.receivingPhone && member.user && member.user.phone) {
+          member.receivingPhone = member.user.phone;
+          membersFixed++;
+        }
+      }
 
-    await chama.save();
-    await chama.populate('admin', 'name email phone');
-    await chama.populate('members.user', 'name email phone');
+      if (membersFixed > 0) {
+        console.log(`Fixed ${membersFixed} members without receiving phone numbers`);
+      }
 
-    // Send join notification message
-    const joinMessage = new Message({
-      chama: chama._id,
-      sender: userId,
-      content: `${req.user.name} joined the group! 👋`,
-      messageType: 'system'
-    });
-    await joinMessage.save();
+      // Add new member with receiving phone
+      const nextPayoutOrder = chama.members.length + 1;
+      chama.members.push({
+        user: userId,
+        payoutOrder: nextPayoutOrder,
+        hasReceived: false,
+        receivingPhone: formattedPhone
+      });
 
-    res.json({
-      success: true,
-      message: 'Successfully joined chama',
-      chama
-    });
+      // Save the chama with all fixes
+      await chama.save();
+      
+      // Re-populate after save to get fresh data
+      await chama.populate('admin', 'name email phone');
+      await chama.populate('members.user', 'name email phone');
+
+      // Send join notification message
+      const joinMessage = new Message({
+        chama: chama._id,
+        sender: userId,
+        content: `${req.user.name} joined the group! 👋`,
+        messageType: 'system'
+      });
+      await joinMessage.save();
+
+      res.json({
+        success: true,
+        message: 'Successfully joined chama',
+        chama
+      });
+
+    } catch (saveError) {
+      console.error('Error saving chama with new member:', saveError);
+      
+      // If it's a validation error, provide specific feedback
+      if (saveError.name === 'ValidationError') {
+        const errorMessages = Object.values(saveError.errors).map(err => err.message);
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error: ' + errorMessages.join(', '),
+          details: errorMessages
+        });
+      }
+      
+      throw saveError; // Re-throw if it's not a validation error
+    }
+
   } catch (error) {
     console.error('Error joining chama:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error joining chama'
+      message: 'Server error joining chama',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
-// Finalize member ordering (admin only)
+// Finalize member ordering (admin only) - FIXED VERSION
 router.post('/:chamaId/finalize-ordering', authenticateToken, validateChamaAccess, async (req, res) => {
   try {
     if (!req.isAdmin) {
@@ -437,18 +476,59 @@ router.post('/:chamaId/finalize-ordering', authenticateToken, validateChamaAcces
       });
     }
 
-    // Finalize ordering using the method
+    // CRITICAL FIX: Ensure all members have receiving phone numbers before finalizing
+    await chama.populate('members.user', 'name email phone');
+    
+    let membersFixed = 0;
+    for (let member of chama.members) {
+      if (!member.receivingPhone && member.user && member.user.phone) {
+        member.receivingPhone = member.user.phone;
+        membersFixed++;
+      }
+    }
+
+    if (membersFixed > 0) {
+      console.log(`Fixed ${membersFixed} members without receiving phone numbers during finalization`);
+      
+      // Send notification about auto-fixed phone numbers
+      const notificationMessage = new Message({
+        chama: chama._id,
+        sender: req.user._id,
+        content: `📱 Important: Some members didn't set their receiving phone numbers. We've set them to your login phone numbers. Please update your receiving phone if you want payouts sent to a different number.`,
+        messageType: 'system'
+      });
+      await notificationMessage.save();
+    }
+
+    // Now finalize ordering using the method
     chama.finalizeOrdering();
     await chama.save();
 
-    // Send ordering notification
+    // Send ordering notification with payout order information
+    const membersList = chama.members
+      .sort((a, b) => a.payoutOrder - b.payoutOrder)
+      .map(member => `${member.payoutOrder}. ${member.user.name}`)
+      .join('\n');
+
     const orderingMessage = new Message({
       chama: chama._id,
       sender: req.user._id,
-      content: `🎲 Member ordering has been finalized! The payout order has been randomly determined. Check your position in the Members tab.`,
+      content: `🎲 Chama has officially started! The payout order has been randomly determined:\n\n${membersList}\n\n${chama.members.find(m => m.payoutOrder === 1)?.user.name} will receive the first payout. Let's start contributing! 💪`,
       messageType: 'system'
     });
     await orderingMessage.save();
+
+    // Send individual notifications to members about their position
+    const currentReceiver = chama.members.find(m => m.payoutOrder === 1);
+    if (currentReceiver) {
+      const receiverNotification = new Message({
+        chama: chama._id,
+        sender: req.user._id,
+        content: `🎯 ${currentReceiver.user.name}, you're first to receive! You'll get KSh ${(chama.contributionAmount * chama.members.length).toLocaleString()} when everyone contributes. Don't forget to contribute your share too! 💰`,
+        messageType: 'system'
+      });
+      await receiverNotification.save();
+    }
 
     await chama.populate('admin', 'name email phone');
     await chama.populate('members.user', 'name email phone');
@@ -508,8 +588,20 @@ router.patch('/:chamaId/update-phone', authenticateToken, validateChamaAccess, a
       });
     }
 
+    const oldPhone = member.receivingPhone;
     member.receivingPhone = formattedPhone;
     await chama.save();
+
+    // Send notification about phone number update
+    if (oldPhone !== formattedPhone) {
+      const updateMessage = new Message({
+        chama: chama._id,
+        sender: userId,
+        content: `📱 ${req.user.name} updated their receiving phone number for M-PESA payouts.`,
+        messageType: 'system'
+      });
+      await updateMessage.save();
+    }
 
     res.json({
       success: true,
