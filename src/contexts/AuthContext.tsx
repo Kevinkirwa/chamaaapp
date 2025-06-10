@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import toast from 'react-hot-toast';
 
 interface User {
   _id: string;
@@ -47,11 +48,12 @@ axios.interceptors.request.use(
   },
   (error) => {
     console.error('❌ Request error:', error);
+    toast.error('Request failed. Please check your connection.');
     return Promise.reject(error);
   }
 );
 
-// Add response interceptor for debugging
+// Add response interceptor for debugging and error handling
 axios.interceptors.response.use(
   (response) => {
     console.log('✅ Response received:', response.status, response.data?.success ? 'Success' : 'Failed');
@@ -60,9 +62,22 @@ axios.interceptors.response.use(
   (error) => {
     console.error('❌ Response error:', error.response?.status, error.response?.data?.message || error.message);
     
-    // Handle network errors
+    // Handle different types of errors with user-friendly messages
     if (!error.response) {
       console.error('❌ Network error - check backend deployment at chamaaapp.onrender.com');
+      toast.error('Unable to connect to server. Please check your internet connection and try again.');
+    } else if (error.response.status === 404) {
+      toast.error('Service not found. Please try again later.');
+    } else if (error.response.status === 500) {
+      toast.error('Server error. Please try again later.');
+    } else if (error.response.status === 403) {
+      toast.error('Access denied. You don\'t have permission for this action.');
+    } else if (error.response.status === 401) {
+      toast.error('Session expired. Please login again.');
+      // Auto logout on 401
+      localStorage.removeItem('token');
+      delete axios.defaults.headers.common['Authorization'];
+      window.location.href = '/auth';
     }
     
     return Promise.reject(error);
@@ -98,10 +113,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.removeItem('token');
             delete axios.defaults.headers.common['Authorization'];
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('❌ Token validation failed:', error);
           localStorage.removeItem('token');
           delete axios.defaults.headers.common['Authorization'];
+          
+          // Don't show error toast for token validation on app load
+          if (error.response?.status !== 401) {
+            toast.error('Session validation failed. Please login again.');
+          }
         }
       }
       setLoading(false);
@@ -126,18 +146,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         setUser(user);
         console.log('✅ Login successful for:', user.email);
+        toast.success(`Welcome back, ${user.name}!`);
       } else {
         throw new Error(response.data.message || 'Login failed');
       }
     } catch (error: any) {
       console.error('❌ Login failed:', error.response?.data || error.message);
       
-      // Provide more specific error messages
-      if (!error.response) {
-        throw new Error('Unable to connect to server. Please check your internet connection or try again later.');
+      // Provide specific error messages based on response
+      if (error.response?.data?.message) {
+        // Use server-provided error message
+        throw new Error(error.response.data.message);
+      } else if (error.response?.status === 400) {
+        throw new Error('Invalid email or password. Please check your credentials.');
+      } else if (error.response?.status === 429) {
+        throw new Error('Too many login attempts. Please try again later.');
+      } else if (!error.response) {
+        throw new Error('Unable to connect to server. Please check your internet connection.');
+      } else {
+        throw new Error('Login failed. Please try again.');
       }
-      
-      throw new Error(error.response?.data?.message || 'Login failed');
     }
   };
 
@@ -162,18 +190,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         setUser(user);
         console.log('✅ Registration successful for:', user.email);
+        toast.success(`Welcome to M-Chama, ${user.name}!`);
       } else {
         throw new Error(response.data.message || 'Registration failed');
       }
     } catch (error: any) {
       console.error('❌ Registration failed:', error.response?.data || error.message);
       
-      // Provide more specific error messages
-      if (!error.response) {
-        throw new Error('Unable to connect to server. Please check your internet connection or try again later.');
+      // Provide specific error messages based on response
+      if (error.response?.data?.message) {
+        // Use server-provided error message
+        throw new Error(error.response.data.message);
+      } else if (error.response?.status === 400) {
+        throw new Error('Invalid registration data. Please check all fields.');
+      } else if (error.response?.status === 409) {
+        throw new Error('An account with this email or phone number already exists.');
+      } else if (error.response?.status === 422) {
+        throw new Error('Please check your phone number format (e.g., 254712345678).');
+      } else if (!error.response) {
+        throw new Error('Unable to connect to server. Please check your internet connection.');
+      } else {
+        throw new Error('Registration failed. Please try again.');
       }
-      
-      throw new Error(error.response?.data?.message || 'Registration failed');
     }
   };
 
@@ -182,6 +220,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('token');
     delete axios.defaults.headers.common['Authorization'];
     setUser(null);
+    toast.success('Logged out successfully');
   };
 
   const value = {

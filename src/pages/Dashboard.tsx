@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, UserPlus, Search, TrendingUp, Users, DollarSign } from 'lucide-react';
+import { Plus, UserPlus, Search, TrendingUp, Users, DollarSign, AlertCircle, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import ChamaCard from '../components/dashboard/ChamaCard';
@@ -23,8 +24,10 @@ interface Chama {
 }
 
 const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
   const [chamas, setChamas] = useState<Chama[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -40,12 +43,27 @@ const Dashboard: React.FC = () => {
 
   const fetchChamas = async () => {
     try {
+      setError('');
       const response = await axios.get('/api/chamas/my-chamas');
       if (response.data.success) {
         setChamas(response.data.chamas);
         calculateStats(response.data.chamas);
+      } else {
+        setError('Failed to load your Chamas');
       }
     } catch (error: any) {
+      console.error('Error fetching chamas:', error);
+      
+      if (error.response?.status === 401) {
+        setError('Session expired. Please login again.');
+      } else if (error.response?.status === 403) {
+        setError('You don\'t have permission to view Chamas.');
+      } else if (!error.response) {
+        setError('Unable to connect to server. Please check your internet connection.');
+      } else {
+        setError(error.response?.data?.message || 'Failed to load your Chamas');
+      }
+      
       toast.error(error.response?.data?.message || 'Failed to fetch chamas');
     } finally {
       setLoading(false);
@@ -74,15 +92,42 @@ const Dashboard: React.FC = () => {
   );
 
   const handleChamaClick = (chama: Chama) => {
-    // Navigate to chama details - for now, just log
-    console.log('Navigate to chama:', chama._id);
-    toast.info('Chama details page coming soon!');
+    navigate(`/chama/${chama._id}`);
+  };
+
+  const handleRetry = () => {
+    setLoading(true);
+    fetchChamas();
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading your Chamas...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-64">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-8 h-8 text-red-600" />
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Unable to Load Chamas</h3>
+          <p className="text-gray-600 mb-6">{error}</p>
+          <button
+            onClick={handleRetry}
+            className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors mx-auto"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Try Again</span>
+          </button>
+        </div>
       </div>
     );
   }

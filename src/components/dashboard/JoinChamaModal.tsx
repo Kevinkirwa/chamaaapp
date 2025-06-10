@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Key } from 'lucide-react';
+import { X, Key, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -12,16 +12,30 @@ interface JoinChamaModalProps {
 const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>('');
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
+
+    if (!inviteCode.trim()) {
+      setError('Please enter an invite code');
+      setLoading(false);
+      return;
+    }
+
+    if (inviteCode.length !== 6) {
+      setError('Invite code must be 6 characters long');
+      setLoading(false);
+      return;
+    }
 
     try {
       const response = await axios.post('/api/chamas/join', {
-        inviteCode: inviteCode.toUpperCase()
+        inviteCode: inviteCode.toUpperCase().trim()
       });
 
       if (response.data.success) {
@@ -29,11 +43,28 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
         onSuccess();
         onClose();
         setInviteCode('');
+        setError('');
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to join chama');
+      const errorMessage = error.response?.data?.message || 'Failed to join chama';
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setError(''); // Clear error when user starts typing
+    const value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    setInviteCode(value);
+  };
+
+  const handleClose = () => {
+    if (!loading) {
+      setInviteCode('');
+      setError('');
+      onClose();
     }
   };
 
@@ -43,8 +74,9 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <h2 className="text-xl font-semibold text-gray-900">Join Chama</h2>
           <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            onClick={handleClose}
+            disabled={loading}
+            className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
           >
             <X className="w-6 h-6" />
           </button>
@@ -58,6 +90,17 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
             <p className="text-gray-600">Enter the invite code shared by your chama admin</p>
           </div>
 
+          {/* Error Display */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-3">
+              <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-red-800 text-sm font-medium">Error</p>
+                <p className="text-red-700 text-sm mt-1">{error}</p>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -66,19 +109,26 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
               <input
                 type="text"
                 value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-2xl font-mono tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                onChange={handleChange}
+                className={`w-full px-4 py-3 border rounded-lg text-center text-2xl font-mono tracking-widest focus:ring-2 focus:border-transparent transition-all ${
+                  error ? 'border-red-300 bg-red-50 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'
+                }`}
                 placeholder="ABC123"
                 maxLength={6}
                 required
+                disabled={loading}
               />
+              <p className="text-xs text-gray-500 mt-1 text-center">
+                Enter the 6-character code (letters and numbers only)
+              </p>
             </div>
 
             <div className="flex space-x-3">
               <button
                 type="button"
-                onClick={onClose}
-                className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                onClick={handleClose}
+                disabled={loading}
+                className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
@@ -87,7 +137,14 @@ const JoinChamaModal: React.FC<JoinChamaModalProps> = ({ isOpen, onClose, onSucc
                 disabled={loading || inviteCode.length < 6}
                 className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
-                {loading ? 'Joining...' : 'Join Chama'}
+                {loading ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <span>Joining...</span>
+                  </div>
+                ) : (
+                  'Join Chama'
+                )}
               </button>
             </div>
           </form>

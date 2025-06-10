@@ -1,0 +1,426 @@
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { 
+  ArrowLeft, 
+  Users, 
+  DollarSign, 
+  Calendar, 
+  Share2, 
+  Settings,
+  CreditCard,
+  TrendingUp,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Phone,
+  Copy
+} from 'lucide-react';
+import axios from 'axios';
+import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
+
+interface Member {
+  user: {
+    _id: string;
+    name: string;
+    email: string;
+    phone: string;
+  };
+  payoutOrder: number;
+  hasReceived: boolean;
+  joinedAt: string;
+  totalContributed: number;
+}
+
+interface Contribution {
+  _id: string;
+  user: {
+    name: string;
+    email: string;
+    phone: string;
+  };
+  amount: number;
+  status: string;
+  mpesaCode?: string;
+  createdAt: string;
+  cycle: number;
+}
+
+interface ChamaData {
+  _id: string;
+  name: string;
+  description: string;
+  contributionAmount: number;
+  currentCycle: number;
+  inviteCode: string;
+  admin: {
+    _id: string;
+    name: string;
+    email: string;
+  };
+  members: Member[];
+  isAdmin: boolean;
+}
+
+const ChamaDetails: React.FC = () => {
+  const { chamaId } = useParams<{ chamaId: string }>();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [chama, setChama] = useState<ChamaData | null>(null);
+  const [contributions, setContributions] = useState<Contribution[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [contributionLoading, setContributionLoading] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState(user?.phone || '');
+  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'contributions'>('overview');
+
+  useEffect(() => {
+    if (chamaId) {
+      fetchChamaDetails();
+    }
+  }, [chamaId]);
+
+  const fetchChamaDetails = async () => {
+    try {
+      const response = await axios.get(`/api/chamas/${chamaId}`);
+      if (response.data.success) {
+        setChama(response.data.chama);
+        setContributions(response.data.contributions);
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to fetch chama details');
+      navigate('/dashboard');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleContribution = async () => {
+    if (!phoneNumber) {
+      toast.error('Please enter your phone number');
+      return;
+    }
+
+    setContributionLoading(true);
+    try {
+      const response = await axios.post('/api/contributions', {
+        chamaId,
+        phoneNumber
+      });
+
+      if (response.data.success) {
+        toast.success('STK Push sent! Please complete payment on your phone.');
+        fetchChamaDetails();
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to initiate contribution');
+    } finally {
+      setContributionLoading(false);
+    }
+  };
+
+  const copyInviteCode = () => {
+    if (chama) {
+      navigator.clipboard.writeText(chama.inviteCode);
+      toast.success('Invite code copied to clipboard!');
+    }
+  };
+
+  const shareInviteLink = () => {
+    if (chama) {
+      const message = `Join my Chama "${chama.name}" on M-Chama! Use invite code: ${chama.inviteCode}`;
+      if (navigator.share) {
+        navigator.share({
+          title: 'Join My Chama',
+          text: message,
+          url: window.location.origin
+        });
+      } else {
+        navigator.clipboard.writeText(message);
+        toast.success('Invite message copied to clipboard!');
+      }
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+      </div>
+    );
+  }
+
+  if (!chama) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-gray-600">Chama not found</p>
+      </div>
+    );
+  }
+
+  const currentUserMember = chama.members.find(m => m.user._id === user?._id);
+  const hasContributedThisCycle = contributions.some(c => 
+    c.user.email === user?.email && c.cycle === chama.currentCycle && c.status === 'completed'
+  );
+  const currentReceiver = chama.members.find(m => 
+    m.payoutOrder === chama.currentCycle && !m.hasReceived
+  );
+
+  return (
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span>Back to Dashboard</span>
+          </button>
+        </div>
+        
+        {chama.isAdmin && (
+          <div className="flex space-x-3">
+            <button
+              onClick={shareInviteLink}
+              className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Share2 className="w-4 h-4" />
+              <span>Share Invite</span>
+            </button>
+            <button className="flex items-center space-x-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
+              <Settings className="w-4 h-4" />
+              <span>Settings</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Chama Info */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">{chama.name}</h1>
+            <p className="text-gray-600 mt-2">{chama.description}</p>
+            <div className="flex items-center space-x-4 mt-4">
+              <span className="text-sm text-gray-500">
+                Admin: <span className="font-medium">{chama.admin.name}</span>
+              </span>
+              <span className="text-sm text-gray-500">
+                Cycle: <span className="font-medium">{chama.currentCycle}</span>
+              </span>
+            </div>
+          </div>
+          
+          <div className="text-right">
+            <div className="bg-green-100 rounded-lg p-4">
+              <p className="text-sm text-green-600 font-medium">Monthly Contribution</p>
+              <p className="text-2xl font-bold text-green-800">KSh {chama.contributionAmount.toLocaleString()}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Invite Code */}
+        <div className="bg-gray-50 rounded-lg p-4 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-700">Invite Code</p>
+            <p className="text-2xl font-mono font-bold text-gray-900">{chama.inviteCode}</p>
+          </div>
+          <button
+            onClick={copyInviteCode}
+            className="flex items-center space-x-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <Copy className="w-4 h-4" />
+            <span>Copy</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Current Receiver */}
+      {currentReceiver && (
+        <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-xl p-6 border border-green-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Current Receiver</h3>
+              <p className="text-gray-600">{currentReceiver.user.name}</p>
+              <p className="text-sm text-gray-500">{currentReceiver.user.email}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-gray-600">Expected Amount</p>
+              <p className="text-2xl font-bold text-green-600">
+                KSh {(chama.contributionAmount * chama.members.length).toLocaleString()}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contribution Section */}
+      {!hasContributedThisCycle && currentUserMember && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Make Your Contribution</h3>
+          <div className="flex items-end space-x-4">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Phone Number for M-PESA
+              </label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="tel"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  placeholder="254712345678"
+                />
+              </div>
+            </div>
+            <button
+              onClick={handleContribution}
+              disabled={contributionLoading}
+              className="flex items-center space-x-2 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              <CreditCard className="w-5 h-5" />
+              <span>{contributionLoading ? 'Processing...' : `Pay KSh ${chama.contributionAmount}`}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Navigation Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="flex space-x-8">
+          {[
+            { id: 'overview', label: 'Overview' },
+            { id: 'members', label: 'Members' },
+            { id: 'contributions', label: 'Contributions' }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === tab.id
+                  ? 'border-green-600 text-green-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'overview' && (
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Members</p>
+                <p className="text-3xl font-bold text-gray-900">{chama.members.length}</p>
+              </div>
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Users className="w-6 h-6 text-blue-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Current Cycle</p>
+                <p className="text-3xl font-bold text-gray-900">{chama.currentCycle}</p>
+              </div>
+              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <Calendar className="w-6 h-6 text-green-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Cycle Progress</p>
+                <p className="text-3xl font-bold text-gray-900">
+                  {contributions.filter(c => c.status === 'completed').length}/{chama.members.length}
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
+                <TrendingUp className="w-6 h-6 text-orange-600" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'members' && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-6">Members ({chama.members.length})</h3>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {chama.members.map((member) => (
+              <div key={member.user._id} className="p-4 border border-gray-200 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-medium text-gray-900">{member.user.name}</h4>
+                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                    Order #{member.payoutOrder}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-600">{member.user.email}</p>
+                <p className="text-sm text-gray-600">{member.user.phone}</p>
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="text-xs text-gray-500">
+                    Joined {new Date(member.joinedAt).toLocaleDateString()}
+                  </span>
+                  {member.hasReceived && (
+                    <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                      Received
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'contributions' && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-6">Contributions</h3>
+          <div className="space-y-3">
+            {contributions.map((contribution) => (
+              <div key={contribution._id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div>
+                  <p className="font-medium text-gray-900">{contribution.user.name}</p>
+                  <p className="text-sm text-gray-500">
+                    Cycle {contribution.cycle} • KSh {contribution.amount} • {new Date(contribution.createdAt).toLocaleDateString()}
+                  </p>
+                  {contribution.mpesaCode && (
+                    <p className="text-xs text-gray-500">M-PESA: {contribution.mpesaCode}</p>
+                  )}
+                </div>
+                <div className="flex items-center space-x-2">
+                  {contribution.status === 'completed' ? (
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                  ) : contribution.status === 'failed' ? (
+                    <XCircle className="w-5 h-5 text-red-600" />
+                  ) : (
+                    <Clock className="w-5 h-5 text-yellow-600" />
+                  )}
+                  <span className={`text-xs px-2 py-1 rounded-full ${
+                    contribution.status === 'completed' ? 'bg-green-100 text-green-800' :
+                    contribution.status === 'failed' ? 'bg-red-100 text-red-800' :
+                    'bg-yellow-100 text-yellow-800'
+                  }`}>
+                    {contribution.status}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ChamaDetails;

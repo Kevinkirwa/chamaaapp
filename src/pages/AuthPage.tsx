@@ -2,7 +2,11 @@ import React, { useState } from 'react';
 import LoginForm from '../components/auth/LoginForm';
 import RegisterForm from '../components/auth/RegisterForm';
 
-const AuthPage: React.FC = () => {
+interface AuthPageProps {
+  onBackToHome?: () => void;
+}
+
+const AuthPage: React.FC<AuthPageProps> = ({ onBackToHome }) => {
   const [isLogin, setIsLogin] = useState(true);
 
   return (
@@ -10,9 +14,15 @@ const AuthPage: React.FC = () => {
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl shadow-xl p-8">
           {isLogin ? (
-            <LoginForm onToggleForm={() => setIsLogin(false)} />
+            <LoginForm 
+              onToggleForm={() => setIsLogin(false)} 
+              onBackToHome={onBackToHome}
+            />
           ) : (
-            <RegisterForm onToggleForm={() => setIsLogin(true)} />
+            <RegisterForm 
+              onToggleForm={() => setIsLogin(true)} 
+              onBackToHome={onBackToHome}
+            />
           )}
         </div>
         

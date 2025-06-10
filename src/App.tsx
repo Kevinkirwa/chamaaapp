@@ -6,6 +6,8 @@ import Layout from './components/Layout';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import Dashboard from './pages/Dashboard';
+import ChamaDetails from './pages/ChamaDetails';
+import AdminDashboard from './pages/AdminDashboard';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -42,13 +44,17 @@ function AppContent() {
     setShowAuth(true);
   };
 
+  const handleBackToHome = () => {
+    setShowAuth(false);
+  };
+
   return (
     <Router>
       <Routes>
         <Route path="/" element={
           showAuth ? (
             <PublicRoute>
-              <AuthPage />
+              <AuthPage onBackToHome={handleBackToHome} />
             </PublicRoute>
           ) : (
             <LandingPage onGetStarted={handleGetStarted} />
@@ -56,12 +62,22 @@ function AppContent() {
         } />
         <Route path="/auth" element={
           <PublicRoute>
-            <AuthPage />
+            <AuthPage onBackToHome={handleBackToHome} />
           </PublicRoute>
         } />
         <Route path="/dashboard" element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/chama/:chamaId" element={
+          <ProtectedRoute>
+            <ChamaDetails />
+          </ProtectedRoute>
+        } />
+        <Route path="/admin" element={
+          <ProtectedRoute>
+            <AdminDashboard />
           </ProtectedRoute>
         } />
       </Routes>
