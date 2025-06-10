@@ -30,10 +30,12 @@ class MPESAService {
       console.log(`🔗 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🌐 Base URL: ${this.baseUrl}`);
       
-      // FIXED: Show correct callback URL format
-      const fullCallbackUrl = `${this.callbackUrl}/api/mpesa/callback/contribution`;
-      console.log(`📞 Callback URL: ${fullCallbackUrl}`);
-      console.log('⚠️  IMPORTANT: Make sure your M-PESA app callback URL matches exactly!');
+      // FIXED: Show correct callback URL format without duplication
+      const callbackBase = this.callbackUrl || 'https://chamaaapp.onrender.com';
+      const contributionCallbackUrl = `${callbackBase}/api/mpesa/callback/contribution`;
+      console.log(`📞 Contribution Callback URL: ${contributionCallbackUrl}`);
+      console.log('⚠️  CRITICAL: Make sure your M-PESA app callback URL matches EXACTLY!');
+      console.log('⚠️  Common mistake: Adding /api/mpesa/callback/contribution to a URL that already contains it');
     }
   }
 
@@ -174,8 +176,11 @@ class MPESAService {
         throw new Error('Amount must be at least KSh 1');
       }
 
-      // FIXED: Use correct callback URL format
-      const fullCallbackUrl = `${this.callbackUrl}/api/mpesa/callback/contribution`;
+      // FIXED: Construct callback URL properly without duplication
+      const callbackBase = this.callbackUrl || 'https://chamaaapp.onrender.com';
+      // Remove any existing /api/mpesa/callback/contribution from the base URL
+      const cleanCallbackBase = callbackBase.replace(/\/api\/mpesa\/callback\/contribution$/, '');
+      const contributionCallbackUrl = `${cleanCallbackBase}/api/mpesa/callback/contribution`;
 
       // CRITICAL: Use business shortcode for PartyB (collection point)
       const requestData = {
@@ -187,7 +192,7 @@ class MPESAService {
         PartyA: formattedPhone, // Customer phone number
         PartyB: this.shortcode, // Business shortcode (collection point)
         PhoneNumber: formattedPhone, // Phone to receive STK push
-        CallBackURL: fullCallbackUrl, // FIXED: Full callback URL
+        CallBackURL: contributionCallbackUrl, // FIXED: Clean callback URL
         AccountReference: accountReference,
         TransactionDesc: transactionDesc
       };
@@ -198,7 +203,7 @@ class MPESAService {
         amount: `KSh ${roundedAmount.toLocaleString()}`,
         reference: accountReference,
         description: transactionDesc,
-        callbackUrl: fullCallbackUrl // Show the callback URL being used
+        callbackUrl: contributionCallbackUrl // Show the clean callback URL
       });
 
       const response = await axios.post(
@@ -230,7 +235,7 @@ class MPESAService {
         });
 
         console.log(`⏳ Payment ${response.data.CheckoutRequestID} tracked as pending - waiting for Safaricom callback`);
-        console.log(`📞 Safaricom will call: ${fullCallbackUrl}`);
+        console.log(`📞 Safaricom will call: ${contributionCallbackUrl}`);
 
         // Remove from pending after 5 minutes (M-PESA timeout)
         setTimeout(() => {
@@ -290,6 +295,10 @@ class MPESAService {
         throw new Error('Payout amount must be at least KSh 1');
       }
 
+      // FIXED: Construct callback URLs properly
+      const callbackBase = this.callbackUrl || 'https://chamaaapp.onrender.com';
+      const cleanCallbackBase = callbackBase.replace(/\/api\/mpesa\/callback\/.*$/, '');
+
       // B2C Payment Request (Business to Customer)
       const requestData = {
         InitiatorName: 'M-Chama System', // System initiator
@@ -299,8 +308,8 @@ class MPESAService {
         PartyA: this.shortcode, // Business shortcode (source)
         PartyB: formattedPhone, // Customer phone (destination)
         Remarks: transactionDesc,
-        QueueTimeOutURL: `${this.callbackUrl}/api/mpesa/callback/payout/timeout`,
-        ResultURL: `${this.callbackUrl}/api/mpesa/callback/payout/result`,
+        QueueTimeOutURL: `${cleanCallbackBase}/api/mpesa/callback/payout/timeout`,
+        ResultURL: `${cleanCallbackBase}/api/mpesa/callback/payout/result`,
         Occasion: accountReference
       };
 
@@ -742,6 +751,9 @@ class MPESAService {
   async checkServiceStatus() {
     try {
       const token = await this.getAccessToken();
+      const callbackBase = this.callbackUrl || 'https://chamaaapp.onrender.com';
+      const cleanCallbackBase = callbackBase.replace(/\/api\/mpesa\/callback\/.*$/, '');
+      
       return {
         status: 'operational',
         environment: process.env.NODE_ENV || 'development',
@@ -749,7 +761,7 @@ class MPESAService {
         shortcode: this.shortcode,
         tokenValid: !!token,
         pendingPayments: this.pendingPayments.size,
-        callbackUrl: `${this.callbackUrl}/api/mpesa/callback/contribution`
+        callbackUrl: `${cleanCallbackBase}/api/mpesa/callback/contribution`
       };
     } catch (error) {
       return {

@@ -279,10 +279,16 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🧪 Test endpoint: http://localhost:${PORT}/api/test`);
   console.log(`👑 Setup Super Admin: POST http://localhost:${PORT}/api/admin/setup-super-admin`);
+  
+  // FIXED: Show correct callback URLs without duplication
+  const callbackBase = process.env.MPESA_CALLBACK_URL || 'https://chamaaapp.onrender.com';
+  const cleanCallbackBase = callbackBase.replace(/\/api\/mpesa\/callback\/.*$/, '');
   console.log(`📱 M-PESA Callbacks:`);
-  console.log(`   - Contribution: ${process.env.MPESA_CALLBACK_URL || 'http://localhost:3002'}/api/mpesa/callback/contribution`);
-  console.log(`   - Payout Result: ${process.env.MPESA_CALLBACK_URL || 'http://localhost:3002'}/api/mpesa/callback/payout/result`);
-  console.log(`   - Payout Timeout: ${process.env.MPESA_CALLBACK_URL || 'http://localhost:3002'}/api/mpesa/callback/payout/timeout`);
+  console.log(`   - Contribution: ${cleanCallbackBase}/api/mpesa/callback/contribution`);
+  console.log(`   - Payout Result: ${cleanCallbackBase}/api/mpesa/callback/payout/result`);
+  console.log(`   - Payout Timeout: ${cleanCallbackBase}/api/mpesa/callback/payout/timeout`);
+  console.log(`⚠️  CRITICAL: Make sure your M-PESA app callback URL matches EXACTLY!`);
+  
   console.log(`🎯 Mode: API-only (Frontend served separately)`);
   console.log(`🌍 Frontend URL: ${process.env.FRONTEND_URL || 'https://dainty-kitten-f03bb6.netlify.app'}`);
   console.log(`📱 Ready to process REAL Safaricom M-PESA callbacks`);
