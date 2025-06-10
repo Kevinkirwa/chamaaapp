@@ -39,6 +39,7 @@ axios.interceptors.request.use(
     console.log('🔄 Making request to:', (config.baseURL || '') + config.url);
     console.log('🔄 Request method:', config.method?.toUpperCase());
     console.log('🔄 Environment:', import.meta.env.MODE);
+    console.log('🔄 Backend URL:', import.meta.env.PROD ? 'Netlify Proxy -> chamaaapp.onrender.com' : API_BASE_URL);
     if (config.data) {
       console.log('🔄 Request data keys:', Object.keys(config.data));
     }
@@ -61,7 +62,7 @@ axios.interceptors.response.use(
     
     // Handle network errors
     if (!error.response) {
-      console.error('❌ Network error - check backend deployment');
+      console.error('❌ Network error - check backend deployment at chamaaapp.onrender.com');
     }
     
     return Promise.reject(error);
@@ -112,6 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     try {
       console.log('🔐 Attempting login for:', email);
+      console.log('🔐 Using backend:', import.meta.env.PROD ? 'chamaaapp.onrender.com (via Netlify proxy)' : API_BASE_URL);
       
       const response = await axios.post('/api/auth/login', {
         email,
@@ -142,6 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (name: string, email: string, phone: string, password: string) => {
     try {
       console.log('📝 Attempting registration for:', email);
+      console.log('📝 Using backend:', import.meta.env.PROD ? 'chamaaapp.onrender.com (via Netlify proxy)' : API_BASE_URL);
       console.log('📝 Registration data:', { name, email, phone, passwordLength: password.length });
       
       const response = await axios.post('/api/auth/register', {
