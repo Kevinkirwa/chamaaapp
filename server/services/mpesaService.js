@@ -11,9 +11,7 @@ class MPESAService {
     this.shortcode = process.env.MPESA_SHORTCODE;
     this.passkey = process.env.MPESA_PASSKEY;
     this.callbackUrl = process.env.MPESA_CALLBACK_URL;
-    this.baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://api.safaricom.co.ke' 
-      : 'https://sandbox.safaricom.co.ke';
+    this.baseUrl = null;
     this.accessToken = null;
     this.tokenExpiry = null;
 
@@ -28,7 +26,25 @@ class MPESAService {
       console.log('✅ M-PESA service initialized with credentials');
       console.log(`📱 Business Shortcode: ${this.shortcode}`);
       console.log(`🔗 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🌐 Base URL: ${this.baseUrl}`);
+
+      // Determine which M-PESA environment (production vs sandbox) to use.
+      // Previously we relied purely on NODE_ENV, which breaks when the server
+      // itself runs in NODE_ENV=production but we still want to use the
+      // Safaricom sandbox credentials. We now support three different ways to
+      // select the target environment, evaluated in the following order:
+      //   1.   MPESA_BASE_URL – Set the full URL manually if you need complete
+      //        control (e.g. https://sandbox.safaricom.co.ke).
+      //   2.   MPESA_ENV – Explicitly set to "production" or "sandbox".
+      //   3.   Fallback to NODE_ENV just like before.
+      if (process.env.MPESA_BASE_URL) {
+        this.baseUrl = process.env.MPESA_BASE_URL;
+      } else {
+        const mpesaEnv = process.env.MPESA_ENV || process.env.NODE_ENV;
+        this.baseUrl = mpesaEnv === 'production'
+          ? 'https://api.safaricom.co.ke'
+          : 'https://sandbox.safaricom.co.ke';
+      }
+      console.log(`🌍 Using M-PESA base URL: ${this.baseUrl}`);
       
       // FIXED: Show correct callback URL format without duplication
       const callbackBase = this.callbackUrl || 'https://chamaaapp.onrender.com';
