@@ -518,8 +518,15 @@ const CreateChamaModal: React.FC<CreateChamaModalProps> = ({ isOpen, onClose, on
     }
 
     const amount = parseFloat(formData.contributionAmount);
-    if (!amount || amount < 100) {
-      setError('Contribution amount must be at least KSh 100');
+    if (!amount || amount < 1) {
+      setError('Contribution amount must be at least KSh 1');
+      setLoading(false);
+      return;
+    }
+
+    // UPDATED: Removed maximum limit for testing purposes
+    if (amount > 10000000) {
+      setError('Contribution amount cannot exceed KSh 10,000,000');
       setLoading(false);
       return;
     }
@@ -656,17 +663,17 @@ const CreateChamaModal: React.FC<CreateChamaModalProps> = ({ isOpen, onClose, on
                 name="contributionAmount"
                 value={formData.contributionAmount}
                 onChange={handleChange}
-                min="100"
-                max="1000000"
-                step="50"
+                min="1"
+                max="10000000"
+                step="1"
                 className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                placeholder="1000"
+                placeholder="1"
                 required
                 disabled={loading}
               />
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Minimum amount is KSh 100, maximum is KSh 1,000,000
+              Minimum amount is KSh 1, maximum is KSh 10,000,000 (perfect for testing!)
             </p>
           </div>
 

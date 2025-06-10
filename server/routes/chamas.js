@@ -305,11 +305,13 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Join chama by invite code - FIXED VERSION
+// Join chama by invite code - ENHANCED VERSION
 router.post('/join', authenticateToken, async (req, res) => {
   try {
     const { inviteCode, receivingPhone } = req.body;
     const userId = req.user._id;
+
+    console.log(`🔍 User ${req.user.email} attempting to join chama with code: ${inviteCode}`);
 
     if (!inviteCode) {
       return res.status(400).json({
@@ -346,7 +348,7 @@ router.post('/join', authenticateToken, async (req, res) => {
     const chama = await Chama.findOne({ 
       inviteCode: inviteCode.toUpperCase(),
       status: 'active'
-    });
+    }).populate('members.user', 'name email phone');
 
     if (!chama) {
       return res.status(404).json({
@@ -355,12 +357,15 @@ router.post('/join', authenticateToken, async (req, res) => {
       });
     }
 
+    console.log(`✅ Found chama: ${chama.name} with ${chama.members.length} members`);
+
     // Check if user is already a member
     const existingMember = chama.members.find(member => 
-      member.user.toString() === userId.toString()
+      member.user._id.toString() === userId.toString()
     );
 
     if (existingMember) {
+      console.log(`❌ User ${req.user.email} is already a member of ${chama.name}`);
       return res.status(400).json({
         success: false,
         message: 'You are already a member of this chama'
@@ -377,33 +382,38 @@ router.post('/join', authenticateToken, async (req, res) => {
 
     // CRITICAL FIX: Ensure existing members have receiving phone numbers before adding new member
     try {
-      // First, populate existing members to get their user data
-      await chama.populate('members.user', 'phone');
-      
       // Check and fix existing members without receiving phone numbers
       let membersFixed = 0;
       for (let member of chama.members) {
         if (!member.receivingPhone && member.user && member.user.phone) {
           member.receivingPhone = member.user.phone;
           membersFixed++;
+          console.log(`🔧 Fixed receiving phone for member: ${member.user.name}`);
         }
       }
 
       if (membersFixed > 0) {
-        console.log(`Fixed ${membersFixed} members without receiving phone numbers`);
+        console.log(`✅ Fixed ${membersFixed} members without receiving phone numbers`);
       }
 
       // Add new member with receiving phone
       const nextPayoutOrder = chama.members.length + 1;
-      chama.members.push({
+      const newMember = {
         user: userId,
         payoutOrder: nextPayoutOrder,
         hasReceived: false,
-        receivingPhone: formattedPhone
-      });
+        receivingPhone: formattedPhone,
+        joinedAt: new Date(),
+        totalContributed: 0,
+        receivedInCurrentCycle: false
+      };
+
+      chama.members.push(newMember);
+      console.log(`➕ Added new member: ${req.user.name} with payout order ${nextPayoutOrder}`);
 
       // Save the chama with all fixes
       await chama.save();
+      console.log(`💾 Saved chama with ${chama.members.length} members`);
       
       // Re-populate after save to get fresh data
       await chama.populate('admin', 'name email phone');
@@ -413,10 +423,12 @@ router.post('/join', authenticateToken, async (req, res) => {
       const joinMessage = new Message({
         chama: chama._id,
         sender: userId,
-        content: `${req.user.name} joined the group! 👋`,
+        content: `${req.user.name} joined the group! 👋 Welcome to ${chama.name}!`,
         messageType: 'system'
       });
       await joinMessage.save();
+
+      console.log(`✅ Successfully added ${req.user.name} to ${chama.name}`);
 
       res.json({
         success: true,
@@ -425,7 +437,7 @@ router.post('/join', authenticateToken, async (req, res) => {
       });
 
     } catch (saveError) {
-      console.error('Error saving chama with new member:', saveError);
+      console.error('❌ Error saving chama with new member:', saveError);
       
       // If it's a validation error, provide specific feedback
       if (saveError.name === 'ValidationError') {
@@ -441,7 +453,7 @@ router.post('/join', authenticateToken, async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error joining chama:', error);
+    console.error('❌ Error joining chama:', error);
     res.status(500).json({
       success: false,
       message: 'Server error joining chama',
@@ -450,7 +462,7 @@ router.post('/join', authenticateToken, async (req, res) => {
   }
 });
 
-// Finalize member ordering (admin only) - FIXED VERSION
+// Finalize member ordering (admin only) - ENHANCED VERSION
 router.post('/:chamaId/finalize-ordering', authenticateToken, validateChamaAccess, async (req, res) => {
   try {
     if (!req.isAdmin) {
@@ -484,11 +496,12 @@ router.post('/:chamaId/finalize-ordering', authenticateToken, validateChamaAcces
       if (!member.receivingPhone && member.user && member.user.phone) {
         member.receivingPhone = member.user.phone;
         membersFixed++;
+        console.log(`🔧 Fixed receiving phone for member: ${member.user.name}`);
       }
     }
 
     if (membersFixed > 0) {
-      console.log(`Fixed ${membersFixed} members without receiving phone numbers during finalization`);
+      console.log(`✅ Fixed ${membersFixed} members without receiving phone numbers during finalization`);
       
       // Send notification about auto-fixed phone numbers
       const notificationMessage = new Message({
@@ -690,10 +703,12 @@ router.post('/:chamaId/messages', authenticateToken, validateChamaAccess, async 
   }
 });
 
-// Get user's chamas
+// Get user's chamas - ENHANCED VERSION
 router.get('/my-chamas', authenticateToken, async (req, res) => {
   try {
     const userId = req.user._id;
+
+    console.log(`🔍 Fetching chamas for user: ${req.user.email} (${userId})`);
 
     // Find chamas where user is admin or member
     const chamas = await Chama.find({
@@ -707,6 +722,8 @@ router.get('/my-chamas', authenticateToken, async (req, res) => {
     .populate('members.user', 'name email phone')
     .sort({ createdAt: -1 });
 
+    console.log(`✅ Found ${chamas.length} chamas for user ${req.user.email}`);
+
     // Add additional info for each chama
     const chamasWithInfo = await Promise.all(chamas.map(async (chama) => {
       const memberCount = chama.members.length;
@@ -716,12 +733,19 @@ router.get('/my-chamas', authenticateToken, async (req, res) => {
         status: 'completed'
       });
 
+      // Check if user is actually a member (double-check)
+      const userMember = chama.members.find(m => m.user._id.toString() === userId.toString());
+      const isAdmin = chama.admin._id.toString() === userId.toString();
+
+      console.log(`📊 Chama ${chama.name}: User is ${isAdmin ? 'admin' : 'member'}, Member found: ${!!userMember}`);
+
       return {
         ...chama.toJSON(),
         memberCount,
         totalContributed,
         totalRequired: memberCount,
-        isAdmin: chama.admin._id.toString() === userId.toString()
+        isAdmin,
+        userIsMember: !!userMember || isAdmin // Ensure user is recognized as member
       };
     }));
 
@@ -730,7 +754,7 @@ router.get('/my-chamas', authenticateToken, async (req, res) => {
       chamas: chamasWithInfo
     });
   } catch (error) {
-    console.error('Error fetching chamas:', error);
+    console.error('❌ Error fetching chamas:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching chamas'
@@ -738,10 +762,13 @@ router.get('/my-chamas', authenticateToken, async (req, res) => {
   }
 });
 
-// Get chama details
+// Get chama details - ENHANCED VERSION
 router.get('/:chamaId', authenticateToken, validateChamaAccess, async (req, res) => {
   try {
     const chama = req.chama;
+    const userId = req.user._id;
+    
+    console.log(`🔍 Getting chama details for ${chama.name}, user: ${req.user.email}`);
     
     // Get contributions for current cycle
     const contributions = await Contribution.find({
@@ -764,11 +791,34 @@ router.get('/:chamaId', authenticateToken, validateChamaAccess, async (req, res)
       member.payoutOrder === chama.currentCycle && !member.hasReceived
     );
 
+    // CRITICAL: Verify user membership
+    const userMember = chama.members.find(m => m.user._id.toString() === userId.toString());
+    const isAdmin = chama.admin._id.toString() === userId.toString();
+    const isActualMember = !!userMember || isAdmin;
+
+    console.log(`👤 User membership check:`, {
+      userId: userId.toString(),
+      isAdmin,
+      userMember: !!userMember,
+      isActualMember,
+      memberCount: chama.members.length
+    });
+
+    // If user is not a member, they shouldn't have access (this should be caught by middleware)
+    if (!isActualMember) {
+      console.log(`❌ User ${req.user.email} is not a member of ${chama.name}`);
+      return res.status(403).json({
+        success: false,
+        message: 'You are not a member of this chama'
+      });
+    }
+
     res.json({
       success: true,
       chama: {
         ...chama.toJSON(),
-        isAdmin: req.isAdmin
+        isAdmin: req.isAdmin,
+        userIsMember: isActualMember
       },
       contributions,
       payouts,
@@ -776,11 +826,12 @@ router.get('/:chamaId', authenticateToken, validateChamaAccess, async (req, res)
         totalContributed,
         totalRequired,
         currentReceiver: currentReceiver ? currentReceiver.user : null,
-        cycleProgress: (totalContributed / totalRequired) * 100
+        cycleProgress: (totalContributed / totalRequired) * 100,
+        userMember: userMember // Include user's member data
       }
     });
   } catch (error) {
-    console.error('Error fetching chama details:', error);
+    console.error('❌ Error fetching chama details:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching chama details'

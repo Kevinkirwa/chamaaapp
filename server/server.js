@@ -130,30 +130,44 @@ console.log('   - /api/contributions (contributions)');
 console.log('   - /api/payouts (payouts)');
 console.log('   - /api/admin (admin management)');
 
-// M-PESA callback endpoints
+// ENHANCED M-PESA callback endpoints - Handle REAL Safaricom responses
 app.post('/api/mpesa/callback/contribution', async (req, res) => {
   try {
-    console.log('📥 M-PESA Contribution Callback received:', JSON.stringify(req.body, null, 2));
+    console.log('📥 REAL Safaricom Contribution Callback received:', JSON.stringify(req.body, null, 2));
     
-    const callbackData = req.body.Body?.stkCallback || req.body;
+    // Handle both possible callback formats from Safaricom
+    const callbackData = req.body.Body?.stkCallback || req.body.stkCallback || req.body;
+    
+    if (!callbackData) {
+      console.error('❌ Invalid callback format received');
+      return res.json({ 
+        ResultCode: 1, 
+        ResultDesc: 'Invalid callback format' 
+      });
+    }
+
+    // Process the real Safaricom callback
     await mpesaService.handleContributionCallback(callbackData);
     
+    // Respond to Safaricom with success
     res.json({ 
       ResultCode: 0, 
       ResultDesc: 'Callback processed successfully' 
     });
   } catch (error) {
-    console.error('❌ Error processing M-PESA callback:', error);
+    console.error('❌ Error processing Safaricom M-PESA callback:', error);
+    
+    // Still respond with success to Safaricom to avoid retries
     res.json({ 
-      ResultCode: 1, 
-      ResultDesc: 'Callback processing failed' 
+      ResultCode: 0, 
+      ResultDesc: 'Callback received but processing failed' 
     });
   }
 });
 
 app.post('/api/mpesa/callback/payout/result', async (req, res) => {
   try {
-    console.log('📥 M-PESA Payout Result received:', JSON.stringify(req.body, null, 2));
+    console.log('📥 REAL Safaricom Payout Result received:', JSON.stringify(req.body, null, 2));
     
     const { Result } = req.body;
     if (Result) {
@@ -167,15 +181,15 @@ app.post('/api/mpesa/callback/payout/result', async (req, res) => {
   } catch (error) {
     console.error('❌ Error processing payout result:', error);
     res.json({ 
-      ResultCode: 1, 
-      ResultDesc: 'Result processing failed' 
+      ResultCode: 0, 
+      ResultDesc: 'Result received but processing failed' 
     });
   }
 });
 
 app.post('/api/mpesa/callback/payout/timeout', async (req, res) => {
   try {
-    console.log('📥 M-PESA Payout Timeout received:', JSON.stringify(req.body, null, 2));
+    console.log('📥 REAL Safaricom Payout Timeout received:', JSON.stringify(req.body, null, 2));
     
     res.json({ 
       ResultCode: 0, 
@@ -184,8 +198,8 @@ app.post('/api/mpesa/callback/payout/timeout', async (req, res) => {
   } catch (error) {
     console.error('❌ Error processing payout timeout:', error);
     res.json({ 
-      ResultCode: 1, 
-      ResultDesc: 'Timeout processing failed' 
+      ResultCode: 0, 
+      ResultDesc: 'Timeout received but processing failed' 
     });
   }
 });
@@ -260,14 +274,18 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 M-Chama API Server running on port ${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🗄️ Database: MongoDB Atlas`);
-  console.log(`💳 M-PESA service configured`);
+  console.log(`💳 M-PESA service configured for REAL callbacks`);
   console.log(`🌐 CORS enabled for frontend`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🧪 Test endpoint: http://localhost:${PORT}/api/test`);
   console.log(`👑 Setup Super Admin: POST http://localhost:${PORT}/api/admin/setup-super-admin`);
+  console.log(`📱 M-PESA Callbacks:`);
+  console.log(`   - Contribution: ${process.env.MPESA_CALLBACK_URL || 'http://localhost:3002'}/api/mpesa/callback/contribution`);
+  console.log(`   - Payout Result: ${process.env.MPESA_CALLBACK_URL || 'http://localhost:3002'}/api/mpesa/callback/payout/result`);
+  console.log(`   - Payout Timeout: ${process.env.MPESA_CALLBACK_URL || 'http://localhost:3002'}/api/mpesa/callback/payout/timeout`);
   console.log(`🎯 Mode: API-only (Frontend served separately)`);
   console.log(`🌍 Frontend URL: ${process.env.FRONTEND_URL || 'https://dainty-kitten-f03bb6.netlify.app'}`);
-  console.log(`📱 Ready to process API requests`);
+  console.log(`📱 Ready to process REAL Safaricom M-PESA callbacks`);
   console.log('🚀 ================================');
 });
 

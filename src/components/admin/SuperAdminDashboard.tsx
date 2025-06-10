@@ -20,7 +20,8 @@ import {
   Phone,
   User,
   MapPin,
-  Camera
+  Camera,
+  X
 } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -659,7 +660,8 @@ const SuperAdminDashboard: React.FC = () => {
                       <img 
                         src={selectedVerification.verificationRequest.documents.idFrontPhoto}
                         alt="ID Front"
-                        className="w-full h-48 object-cover rounded-lg border border-gray-300"
+                        className="w-full h-48 object-cover rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => window.open(selectedVerification.verificationRequest.documents!.idFrontPhoto, '_blank')}
                       />
                     ) : (
                       <div className="w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center">
@@ -675,7 +677,8 @@ const SuperAdminDashboard: React.FC = () => {
                       <img 
                         src={selectedVerification.verificationRequest.documents.idBackPhoto}
                         alt="ID Back"
-                        className="w-full h-48 object-cover rounded-lg border border-gray-300"
+                        className="w-full h-48 object-cover rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => window.open(selectedVerification.verificationRequest.documents!.idBackPhoto, '_blank')}
                       />
                     ) : (
                       <div className="w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center">
@@ -691,7 +694,8 @@ const SuperAdminDashboard: React.FC = () => {
                       <img 
                         src={selectedVerification.verificationRequest.documents.selfiePhoto}
                         alt="Selfie"
-                        className="w-full h-48 object-cover rounded-lg border border-gray-300"
+                        className="w-full h-48 object-cover rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => window.open(selectedVerification.verificationRequest.documents!.selfiePhoto, '_blank')}
                       />
                     ) : (
                       <div className="w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center">
