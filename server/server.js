@@ -1,8 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import connectDB from './database/connection.js';
 import authRoutes from './routes/auth.js';
 import chamaRoutes from './routes/chamas.js';
@@ -11,14 +9,10 @@ import payoutRoutes from './routes/payouts.js';
 import adminRoutes from './routes/admin.js';
 import mpesaService from './services/mpesaService.js';
 
-// Get __dirname equivalent for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 // Load environment variables first
 dotenv.config();
 
-console.log('🔧 Starting M-Chama Server...');
+console.log('🔧 Starting M-Chama API Server...');
 console.log('📊 Environment:', process.env.NODE_ENV || 'development');
 
 // Connect to MongoDB Atlas
@@ -30,7 +24,7 @@ const PORT = process.env.PORT || 3002;
 // Middleware
 console.log('⚙️ Setting up middleware...');
 
-// CORS configuration for both development and production
+// CORS configuration for production API server
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
@@ -42,17 +36,13 @@ const corsOptions = {
       'http://localhost:4173',
       'http://127.0.0.1:5173',
       'http://127.0.0.1:3000',
-      'http://127.0.0.1:4173'
+      'http://127.0.0.1:4173',
+      'https://dainty-kitten-f03bb6.netlify.app'
     ];
 
     // Add production domains if specified
     if (process.env.FRONTEND_URL) {
       allowedOrigins.push(process.env.FRONTEND_URL);
-    }
-    
-    if (process.env.NODE_ENV === 'production') {
-      // Add your production domain here
-      allowedOrigins.push('https://your-domain.com');
     }
 
     if (allowedOrigins.indexOf(origin) !== -1) {
@@ -88,25 +78,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve static files in production
-if (process.env.NODE_ENV === 'production') {
-  // Serve static files from the React app build directory
-  const buildPath = path.join(__dirname, '../dist');
-  app.use(express.static(buildPath));
-  
-  console.log('📁 Serving static files from:', buildPath);
-}
-
 // Health check endpoint (before other routes)
 app.get('/api/health', (req, res) => {
   console.log('🏥 Health check requested');
   res.json({ 
-    status: 'Server is running',
+    status: 'API Server is running',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     database: 'MongoDB Atlas',
     port: PORT,
     cors: 'Enabled',
+    mode: 'API-only',
     routes: {
       auth: '/api/auth',
       chamas: '/api/chamas',
@@ -121,13 +103,14 @@ app.get('/api/health', (req, res) => {
 app.get('/api/test', (req, res) => {
   console.log('🧪 Test endpoint accessed');
   res.json({
-    message: 'Backend is working!',
+    message: 'M-Chama API is working!',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     server: 'M-Chama API v1.0',
     database: 'MongoDB Atlas',
     cors: 'Enabled',
-    origin: req.get('Origin') || 'No Origin'
+    origin: req.get('Origin') || 'No Origin',
+    mode: 'API-only (Frontend served separately)'
   });
 });
 
@@ -207,14 +190,27 @@ app.post('/api/mpesa/callback/payout/timeout', async (req, res) => {
   }
 });
 
-// Serve React app for all non-API routes in production
-if (process.env.NODE_ENV === 'production') {
-  app.get('*', (req, res) => {
-    const indexPath = path.join(__dirname, '../dist/index.html');
-    console.log('📄 Serving React app from:', indexPath);
-    res.sendFile(indexPath);
+// Root endpoint - API info
+app.get('/', (req, res) => {
+  res.json({
+    name: 'M-Chama API',
+    version: '1.0.0',
+    description: 'Digital Savings Groups Platform API',
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/api/health',
+      test: '/api/test',
+      auth: '/api/auth',
+      chamas: '/api/chamas',
+      contributions: '/api/contributions',
+      payouts: '/api/payouts',
+      admin: '/api/admin'
+    },
+    frontend: process.env.FRONTEND_URL || 'https://dainty-kitten-f03bb6.netlify.app',
+    documentation: 'https://github.com/Kevinkirwa/chamaa-app'
   });
-}
+});
 
 // Error handling middleware
 app.use((error, req, res, next) => {
@@ -245,27 +241,33 @@ app.use('/api/*', (req, res) => {
   });
 });
 
+// Catch-all for non-API routes
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'This is an API server. Frontend is served separately.',
+    frontend: process.env.FRONTEND_URL || 'https://dainty-kitten-f03bb6.netlify.app',
+    api: {
+      health: '/api/health',
+      test: '/api/test'
+    }
+  });
+});
+
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log('🚀 ================================');
-  console.log(`🚀 M-Chama Server running on port ${PORT}`);
+  console.log(`🚀 M-Chama API Server running on port ${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🗄️ Database: MongoDB Atlas`);
   console.log(`💳 M-PESA service configured`);
-  console.log(`🌐 CORS enabled for development and production`);
+  console.log(`🌐 CORS enabled for frontend`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🧪 Test endpoint: http://localhost:${PORT}/api/test`);
   console.log(`👑 Setup Super Admin: POST http://localhost:${PORT}/api/admin/setup-super-admin`);
-  
-  if (process.env.NODE_ENV === 'production') {
-    console.log(`📁 Serving React app from /dist`);
-    console.log(`🌍 App available at: http://localhost:${PORT}`);
-  } else {
-    console.log(`🔧 Development mode - Frontend should run on port 5173`);
-    console.log(`🔗 Frontend: http://localhost:5173`);
-  }
-  
-  console.log(`📱 Ready to process Chama transactions`);
+  console.log(`🎯 Mode: API-only (Frontend served separately)`);
+  console.log(`🌍 Frontend URL: ${process.env.FRONTEND_URL || 'https://dainty-kitten-f03bb6.netlify.app'}`);
+  console.log(`📱 Ready to process API requests`);
   console.log('🚀 ================================');
 });
 

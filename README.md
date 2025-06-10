@@ -270,4 +270,4 @@ This project is licensed under the MIT License.
 
 ## 📞 Support
 
-For support, email support@mchama.co.ke or create an issue in the repository.# chamaaapp
+For support, email support@mchama.co.ke or create an issue in the repository.
