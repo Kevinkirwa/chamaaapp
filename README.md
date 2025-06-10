@@ -417,3 +417,8 @@ For support, create an issue in the repository or contact the development team.
 **Live Application**: https://dainty-kitten-f03bb6.netlify.app  
 **API Documentation**: https://chamaaapp.onrender.com/api/health  
 **Repository**: https://github.com/Kevinkirwa/chamaa-app
+
+superadmin   kipngenokirwa@gmail.com
+password   SuperAdmin123!
+
+sign up with any account then approve using above super admin
