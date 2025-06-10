@@ -296,7 +296,7 @@ class MPESAService {
       }
 
       // FIXED: Construct callback URLs properly
-      const callbackBase = this.callbackUrl || 'https://chamaaapp.onrender.com';
+      const callbackBase = this.callbackUrl || 'https://chamaaapp.onrender.com/api/mpesa/callback/contribution';
       const cleanCallbackBase = callbackBase.replace(/\/api\/mpesa\/callback\/.*$/, '');
 
       // B2C Payment Request (Business to Customer)
