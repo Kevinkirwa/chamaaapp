@@ -557,7 +557,7 @@ const ChamaDetails: React.FC = () => {
         </div>
       )}
 
-      {/* ENHANCED CONTRIBUTION SECTION */}
+      {/* ENHANCED CONTRIBUTION SECTION - ALWAYS SHOW IF CHAMA IS STARTED AND USER IS MEMBER */}
       {chama.isOrderingFinalized && currentUserMember && (
         <div className={`rounded-xl shadow-sm border p-6 ${
           hasContributedThisCycle 
