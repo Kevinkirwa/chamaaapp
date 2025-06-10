@@ -557,7 +557,7 @@ const ChamaDetails: React.FC = () => {
         </div>
       )}
 
-      {/* ENHANCED CONTRIBUTION SECTION - ALWAYS SHOW IF CHAMA IS STARTED AND USER IS MEMBER */}
+      {/* CONTRIBUTION SECTION - ALWAYS SHOW IF CHAMA IS STARTED AND USER IS MEMBER */}
       {chama.isOrderingFinalized && currentUserMember && (
         <div className={`rounded-xl shadow-sm border p-6 ${
           hasContributedThisCycle 
@@ -565,7 +565,7 @@ const ChamaDetails: React.FC = () => {
             : 'bg-white border-orange-300 border-2'
         }`}>
           {hasContributedThisCycle ? (
-            // Already Contributed
+            // Already Contributed - Success State
             <div className="text-center">
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <CheckCircle className="w-8 h-8 text-green-600" />
@@ -589,7 +589,7 @@ const ChamaDetails: React.FC = () => {
               </div>
             </div>
           ) : (
-            // Need to Contribute
+            // Need to Contribute - Action State
             <div>
               <div className="flex items-center space-x-3 mb-4">
                 <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
