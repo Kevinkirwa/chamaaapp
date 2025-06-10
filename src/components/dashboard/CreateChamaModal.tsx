@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Users, FileText, DollarSign, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Users, FileText, DollarSign, AlertCircle, Shield, CheckCircle } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -17,8 +17,161 @@ const CreateChamaModal: React.FC<CreateChamaModalProps> = ({ isOpen, onClose, on
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [verificationStatus, setVerificationStatus] = useState<{
+    canCreateChamas: boolean;
+    verificationRequest: any;
+    role: string;
+  } | null>(null);
+  const [requestingVerification, setRequestingVerification] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchVerificationStatus();
+    }
+  }, [isOpen]);
+
+  const fetchVerificationStatus = async () => {
+    try {
+      const response = await axios.get('/api/chamas/verification-status');
+      if (response.data.success) {
+        setVerificationStatus(response.data);
+      }
+    } catch (error: any) {
+      console.error('Error fetching verification status:', error);
+    }
+  };
+
+  const requestVerification = async () => {
+    setRequestingVerification(true);
+    try {
+      const response = await axios.post('/api/chamas/request-verification');
+      if (response.data.success) {
+        toast.success('Verification request submitted successfully!');
+        fetchVerificationStatus();
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Failed to submit verification request';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setRequestingVerification(false);
+    }
+  };
 
   if (!isOpen) return null;
+
+  // Show verification required screen
+  if (verificationStatus && !verificationStatus.canCreateChamas) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+          <div className="flex items-center justify-between p-6 border-b border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-900">Verification Required</h2>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          <div className="p-6">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Shield className="w-8 h-8 text-orange-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Approval Required to Create Chamas
+              </h3>
+              <p className="text-gray-600">
+                To maintain security and prevent spam, only verified users can create new Chamas.
+              </p>
+            </div>
+
+            {verificationStatus.verificationRequest.status === 'none' && (
+              <div className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h4 className="font-medium text-blue-900 mb-2">Why do we require verification?</h4>
+                  <ul className="text-sm text-blue-800 space-y-1">
+                    <li>• Prevents spam and fake Chamas</li>
+                    <li>• Ensures serious commitment to savings groups</li>
+                    <li>• Maintains trust within the community</li>
+                    <li>• Protects all members from fraud</li>
+                  </ul>
+                </div>
+
+                <button
+                  onClick={requestVerification}
+                  disabled={requestingVerification}
+                  className="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {requestingVerification ? (
+                    <div className="flex items-center justify-center space-x-2">
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Submitting Request...</span>
+                    </div>
+                  ) : (
+                    'Request Verification'
+                  )}
+                </button>
+              </div>
+            )}
+
+            {verificationStatus.verificationRequest.status === 'pending' && (
+              <div className="text-center">
+                <div className="w-16 h-16 bg-yellow-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <AlertCircle className="w-8 h-8 text-yellow-600" />
+                </div>
+                <h4 className="font-medium text-gray-900 mb-2">Verification Pending</h4>
+                <p className="text-gray-600 mb-4">
+                  Your verification request is being reviewed by our admin team. 
+                  You'll be notified once it's approved.
+                </p>
+                <p className="text-sm text-gray-500">
+                  Submitted on {new Date(verificationStatus.verificationRequest.requestedAt).toLocaleDateString()}
+                </p>
+              </div>
+            )}
+
+            {verificationStatus.verificationRequest.status === 'rejected' && (
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <X className="w-8 h-8 text-red-600" />
+                  </div>
+                  <h4 className="font-medium text-gray-900 mb-2">Verification Rejected</h4>
+                  <p className="text-gray-600 mb-4">
+                    Your verification request was not approved.
+                  </p>
+                  {verificationStatus.verificationRequest.rejectionReason && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                      <p className="text-sm text-red-800">
+                        <strong>Reason:</strong> {verificationStatus.verificationRequest.rejectionReason}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={requestVerification}
+                  disabled={requestingVerification}
+                  className="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {requestingVerification ? 'Submitting...' : 'Request Verification Again'}
+                </button>
+              </div>
+            )}
+
+            <div className="mt-6 pt-4 border-t border-gray-200">
+              <p className="text-xs text-gray-500 text-center">
+                You can still join existing Chamas using invite codes while waiting for verification.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,7 +215,12 @@ const CreateChamaModal: React.FC<CreateChamaModalProps> = ({ isOpen, onClose, on
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || 'Failed to create chama';
       setError(errorMessage);
-      toast.error(errorMessage);
+      
+      if (error.response?.data?.requiresVerification) {
+        fetchVerificationStatus();
+      } else {
+        toast.error(errorMessage);
+      }
     } finally {
       setLoading(false);
     }
@@ -88,7 +246,15 @@ const CreateChamaModal: React.FC<CreateChamaModalProps> = ({ isOpen, onClose, on
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900">Create New Chama</h2>
+          <div className="flex items-center space-x-3">
+            <h2 className="text-xl font-semibold text-gray-900">Create New Chama</h2>
+            {verificationStatus?.canCreateChamas && (
+              <div className="flex items-center space-x-1 px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
+                <CheckCircle className="w-3 h-3" />
+                <span>Verified</span>
+              </div>
+            )}
+          </div>
           <button
             onClick={handleClose}
             disabled={loading}

@@ -45,7 +45,9 @@ router.post('/setup-super-admin', async (req, res) => {
       email: email.toLowerCase().trim(),
       phone: formattedPhone,
       password,
-      role: 'super_admin'
+      role: 'super_admin',
+      isVerified: true,
+      canCreateChamas: true
     });
 
     await superAdmin.save();
@@ -71,6 +73,157 @@ router.post('/setup-super-admin', async (req, res) => {
   }
 });
 
+// Get verification requests (admin only)
+router.get('/verification-requests', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const requests = await User.find({
+      'verificationRequest.status': 'pending'
+    }).select('-password').sort({ 'verificationRequest.requestedAt': -1 });
+
+    res.json({
+      success: true,
+      requests
+    });
+  } catch (error) {
+    console.error('Error fetching verification requests:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching verification requests'
+    });
+  }
+});
+
+// Approve/Reject verification request (admin only)
+router.patch('/verification-requests/:userId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { action, rejectionReason } = req.body; // action: 'approve' or 'reject'
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid action. Must be approve or reject'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (user.verificationRequest.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: 'No pending verification request for this user'
+      });
+    }
+
+    if (action === 'approve') {
+      user.verificationRequest.status = 'approved';
+      user.verificationRequest.approvedBy = req.user._id;
+      user.verificationRequest.approvedAt = new Date();
+      user.canCreateChamas = true;
+      user.isVerified = true;
+      
+      // Optionally upgrade role to chama_creator
+      if (user.role === 'member') {
+        user.role = 'chama_creator';
+      }
+    } else {
+      user.verificationRequest.status = 'rejected';
+      user.verificationRequest.rejectionReason = rejectionReason || 'No reason provided';
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: `Verification request ${action}d successfully`,
+      user: user.toJSON()
+    });
+  } catch (error) {
+    console.error('Error processing verification request:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error processing verification request'
+    });
+  }
+});
+
+// Grant Chama creation permission (admin only)
+router.patch('/users/:userId/grant-chama-permission', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { 
+        canCreateChamas: true,
+        isVerified: true,
+        role: user.role === 'member' ? 'chama_creator' : user.role
+      },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Chama creation permission granted successfully',
+      user
+    });
+  } catch (error) {
+    console.error('Error granting chama permission:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error granting permission'
+    });
+  }
+});
+
+// Revoke Chama creation permission (admin only)
+router.patch('/users/:userId/revoke-chama-permission', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { 
+        canCreateChamas: false,
+        role: user.role === 'chama_creator' ? 'member' : user.role
+      },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Chama creation permission revoked successfully',
+      user
+    });
+  } catch (error) {
+    console.error('Error revoking chama permission:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error revoking permission'
+    });
+  }
+});
+
 // Get system overview (super admin only)
 router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -85,6 +238,7 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
     const totalChamas = await Chama.countDocuments({ status: 'active' });
     const totalContributions = await Contribution.countDocuments({ status: 'completed' });
     const totalPayouts = await Payout.countDocuments({ status: 'completed' });
+    const pendingVerifications = await User.countDocuments({ 'verificationRequest.status': 'pending' });
 
     // Calculate total money in system
     const contributionSum = await Contribution.aggregate([
@@ -127,6 +281,7 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
         totalContributionAmount,
         totalPayoutAmount,
         systemBalance: totalContributionAmount - totalPayoutAmount,
+        pendingVerifications,
         roleDistribution
       },
       recentActivities: {
@@ -398,16 +553,20 @@ router.patch('/users/:userId/promote', authenticateToken, requireAdmin, async (r
     const { userId } = req.params;
     const { role } = req.body;
 
-    if (!['member', 'admin'].includes(role)) {
+    if (!['member', 'chama_creator', 'admin'].includes(role)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid role. Must be member or admin'
+        message: 'Invalid role. Must be member, chama_creator, or admin'
       });
     }
 
     const user = await User.findByIdAndUpdate(
       userId,
-      { role },
+      { 
+        role,
+        canCreateChamas: ['chama_creator', 'admin'].includes(role),
+        isVerified: true
+      },
       { new: true }
     ).select('-password');
 

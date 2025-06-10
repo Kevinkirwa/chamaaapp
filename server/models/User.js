@@ -28,12 +28,20 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['member', 'admin', 'super_admin'],
+    enum: ['member', 'chama_creator', 'admin', 'super_admin'],
     default: 'member'
   },
   isActive: {
     type: Boolean,
     default: true
+  },
+  isVerified: {
+    type: Boolean,
+    default: false
+  },
+  canCreateChamas: {
+    type: Boolean,
+    default: false
   },
   // Track user's total savings across all Chamas
   totalSavings: {
@@ -44,6 +52,31 @@ const userSchema = new mongoose.Schema({
   totalReceived: {
     type: Number,
     default: 0
+  },
+  // Verification details
+  verificationRequest: {
+    status: {
+      type: String,
+      enum: ['none', 'pending', 'approved', 'rejected'],
+      default: 'none'
+    },
+    requestedAt: {
+      type: Date,
+      default: null
+    },
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    approvedAt: {
+      type: Date,
+      default: null
+    },
+    rejectionReason: {
+      type: String,
+      default: null
+    }
   }
 }, {
   timestamps: true
@@ -65,6 +98,12 @@ userSchema.pre('save', async function(next) {
 // Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
+};
+
+// Check if user can create Chamas
+userSchema.methods.canCreateChama = function() {
+  return this.canCreateChamas || 
+         ['chama_creator', 'admin', 'super_admin'].includes(this.role);
 };
 
 // Remove password from JSON output

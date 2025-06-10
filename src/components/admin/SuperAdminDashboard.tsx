@@ -11,7 +11,11 @@ import {
   UserX,
   Shield,
   BarChart3,
-  Calendar
+  Calendar,
+  AlertCircle,
+  CheckCircle,
+  XCircle,
+  Clock
 } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -24,6 +28,7 @@ interface SystemOverview {
   totalContributionAmount: number;
   totalPayoutAmount: number;
   systemBalance: number;
+  pendingVerifications: number;
   roleDistribution: Array<{ _id: string; count: number }>;
 }
 
@@ -34,12 +39,30 @@ interface User {
   phone: string;
   role: string;
   isActive: boolean;
+  canCreateChamas: boolean;
+  isVerified: boolean;
   createdAt: string;
+  verificationRequest: {
+    status: string;
+    requestedAt?: string;
+    rejectionReason?: string;
+  };
   stats: {
     chamasAsAdmin: number;
     chamasAsMember: number;
     totalContributions: number;
     totalPayouts: number;
+  };
+}
+
+interface VerificationRequest {
+  _id: string;
+  name: string;
+  email: string;
+  phone: string;
+  verificationRequest: {
+    status: string;
+    requestedAt: string;
   };
 }
 
@@ -65,8 +88,9 @@ const SuperAdminDashboard: React.FC = () => {
   const [overview, setOverview] = useState<SystemOverview | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [chamas, setChamas] = useState<Chama[]>([]);
+  const [verificationRequests, setVerificationRequests] = useState<VerificationRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'chamas'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'chamas' | 'verifications'>('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -80,6 +104,8 @@ const SuperAdminDashboard: React.FC = () => {
       fetchUsers();
     } else if (activeTab === 'chamas') {
       fetchChamas();
+    } else if (activeTab === 'verifications') {
+      fetchVerificationRequests();
     }
   }, [activeTab, searchTerm, filterRole, filterStatus]);
 
@@ -126,6 +152,34 @@ const SuperAdminDashboard: React.FC = () => {
     }
   };
 
+  const fetchVerificationRequests = async () => {
+    try {
+      const response = await axios.get('/api/admin/verification-requests');
+      if (response.data.success) {
+        setVerificationRequests(response.data.requests);
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to fetch verification requests');
+    }
+  };
+
+  const handleVerificationRequest = async (userId: string, action: 'approve' | 'reject', rejectionReason?: string) => {
+    try {
+      const response = await axios.patch(`/api/admin/verification-requests/${userId}`, {
+        action,
+        rejectionReason
+      });
+
+      if (response.data.success) {
+        toast.success(`Verification request ${action}d successfully`);
+        fetchVerificationRequests();
+        fetchOverview();
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || `Failed to ${action} verification request`);
+    }
+  };
+
   const toggleUserStatus = async (userId: string, currentStatus: boolean) => {
     try {
       const response = await axios.patch(`/api/admin/users/${userId}/status`, {
@@ -153,6 +207,19 @@ const SuperAdminDashboard: React.FC = () => {
       }
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to update user role');
+    }
+  };
+
+  const grantChamaPermission = async (userId: string) => {
+    try {
+      const response = await axios.patch(`/api/admin/users/${userId}/grant-chama-permission`);
+
+      if (response.data.success) {
+        toast.success('Chama creation permission granted successfully');
+        fetchUsers();
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to grant permission');
     }
   };
 
@@ -198,7 +265,8 @@ const SuperAdminDashboard: React.FC = () => {
           {[
             { id: 'overview', label: 'Overview', icon: BarChart3 },
             { id: 'users', label: 'Users', icon: Users },
-            { id: 'chamas', label: 'Chamas', icon: Building2 }
+            { id: 'chamas', label: 'Chamas', icon: Building2 },
+            { id: 'verifications', label: `Verifications ${overview?.pendingVerifications ? `(${overview.pendingVerifications})` : ''}`, icon: Shield }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -260,11 +328,11 @@ const SuperAdminDashboard: React.FC = () => {
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">System Balance</p>
-                  <p className="text-3xl font-bold text-gray-900">KSh {overview.systemBalance.toLocaleString()}</p>
+                  <p className="text-sm font-medium text-gray-600">Pending Verifications</p>
+                  <p className="text-3xl font-bold text-gray-900">{overview.pendingVerifications}</p>
                 </div>
                 <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <TrendingUp className="w-6 h-6 text-purple-600" />
+                  <AlertCircle className="w-6 h-6 text-purple-600" />
                 </div>
               </div>
             </div>
@@ -273,14 +341,68 @@ const SuperAdminDashboard: React.FC = () => {
           {/* Role Distribution */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">User Role Distribution</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {overview.roleDistribution.map((role) => (
                 <div key={role._id} className="text-center p-4 bg-gray-50 rounded-lg">
                   <p className="text-2xl font-bold text-gray-900">{role.count}</p>
-                  <p className="text-sm text-gray-600 capitalize">{role._id}s</p>
+                  <p className="text-sm text-gray-600 capitalize">{role._id.replace('_', ' ')}s</p>
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Verifications Tab */}
+      {activeTab === 'verifications' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-6">
+              Pending Verification Requests ({verificationRequests.length})
+            </h3>
+            
+            {verificationRequests.length === 0 ? (
+              <div className="text-center py-8">
+                <CheckCircle className="w-12 h-12 text-green-600 mx-auto mb-4" />
+                <p className="text-gray-600">No pending verification requests</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {verificationRequests.map((request) => (
+                  <div key={request._id} className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-medium text-gray-900">{request.name}</h4>
+                        <p className="text-sm text-gray-600">{request.email}</p>
+                        <p className="text-sm text-gray-600">{request.phone}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Requested: {new Date(request.verificationRequest.requestedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={() => handleVerificationRequest(request._id, 'approve')}
+                          className="flex items-center space-x-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          <span>Approve</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            const reason = prompt('Rejection reason (optional):');
+                            handleVerificationRequest(request._id, 'reject', reason || undefined);
+                          }}
+                          className="flex items-center space-x-1 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>Reject</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -307,6 +429,7 @@ const SuperAdminDashboard: React.FC = () => {
             >
               <option value="">All Roles</option>
               <option value="member">Members</option>
+              <option value="chama_creator">Chama Creators</option>
               <option value="admin">Admins</option>
               <option value="super_admin">Super Admins</option>
             </select>
@@ -321,7 +444,7 @@ const SuperAdminDashboard: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stats</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Permissions</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -339,6 +462,7 @@ const SuperAdminDashboard: React.FC = () => {
                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                           user.role === 'super_admin' ? 'bg-purple-100 text-purple-800' :
                           user.role === 'admin' ? 'bg-blue-100 text-blue-800' :
+                          user.role === 'chama_creator' ? 'bg-green-100 text-green-800' :
                           'bg-gray-100 text-gray-800'
                         }`}>
                           {user.role.replace('_', ' ')}
@@ -351,10 +475,19 @@ const SuperAdminDashboard: React.FC = () => {
                           {user.isActive ? 'Active' : 'Suspended'}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        <div>Admin: {user.stats.chamasAsAdmin}</div>
-                        <div>Member: {user.stats.chamasAsMember}</div>
-                        <div>Contributions: {user.stats.totalContributions}</div>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex flex-col space-y-1">
+                          {user.canCreateChamas && (
+                            <span className="inline-flex px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                              Can Create Chamas
+                            </span>
+                          )}
+                          {user.isVerified && (
+                            <span className="inline-flex px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
+                              Verified
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                         <button
@@ -368,10 +501,21 @@ const SuperAdminDashboard: React.FC = () => {
                           {user.isActive ? <UserX className="w-3 h-3 mr-1" /> : <UserCheck className="w-3 h-3 mr-1" />}
                           {user.isActive ? 'Suspend' : 'Activate'}
                         </button>
+                        
+                        {!user.canCreateChamas && (
+                          <button
+                            onClick={() => grantChamaPermission(user._id)}
+                            className="inline-flex items-center px-3 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200"
+                          >
+                            <Shield className="w-3 h-3 mr-1" />
+                            Grant Permission
+                          </button>
+                        )}
+                        
                         {user.role === 'member' && (
                           <button
                             onClick={() => promoteUser(user._id, 'admin')}
-                            className="inline-flex items-center px-3 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200"
+                            className="inline-flex items-center px-3 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200"
                           >
                             <Shield className="w-3 h-3 mr-1" />
                             Promote

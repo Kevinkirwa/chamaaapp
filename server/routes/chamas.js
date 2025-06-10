@@ -2,15 +2,26 @@ import express from 'express';
 import Chama from '../models/Chama.js';
 import Contribution from '../models/Contribution.js';
 import Payout from '../models/Payout.js';
+import User from '../models/User.js';
 import { authenticateToken, validateChamaAccess } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Create a new chama
+// Create a new chama (restricted to approved users)
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { name, description, contributionAmount } = req.body;
     const adminId = req.user._id;
+
+    // Check if user can create Chamas
+    const user = await User.findById(adminId);
+    if (!user.canCreateChama()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You need approval to create Chamas. Please request verification from an admin.',
+        requiresVerification: true
+      });
+    }
 
     // Validate input
     if (!name || !description || !contributionAmount) {
@@ -24,6 +35,13 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Minimum contribution amount is KSh 100'
+      });
+    }
+
+    if (contributionAmount > 1000000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum contribution amount is KSh 1,000,000'
       });
     }
 
@@ -54,6 +72,13 @@ router.post('/', authenticateToken, async (req, res) => {
     await chama.populate('admin', 'name email phone');
     await chama.populate('members.user', 'name email phone');
 
+    // Update user role to chama_creator if they're just a member
+    if (user.role === 'member') {
+      user.role = 'chama_creator';
+      user.canCreateChamas = true;
+      await user.save();
+    }
+
     res.status(201).json({
       success: true,
       message: 'Chama created successfully',
@@ -73,6 +98,70 @@ router.post('/', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error creating chama'
+    });
+  }
+});
+
+// Request verification to create Chamas
+router.post('/request-verification', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const user = await User.findById(userId);
+
+    if (user.canCreateChama()) {
+      return res.status(400).json({
+        success: false,
+        message: 'You already have permission to create Chamas'
+      });
+    }
+
+    if (user.verificationRequest.status === 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: 'Your verification request is already pending approval'
+      });
+    }
+
+    // Update verification request
+    user.verificationRequest = {
+      status: 'pending',
+      requestedAt: new Date(),
+      approvedBy: null,
+      approvedAt: null,
+      rejectionReason: null
+    };
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Verification request submitted successfully. An admin will review your request.'
+    });
+  } catch (error) {
+    console.error('Error requesting verification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error processing verification request'
+    });
+  }
+});
+
+// Get verification status
+router.get('/verification-status', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    res.json({
+      success: true,
+      canCreateChamas: user.canCreateChama(),
+      verificationRequest: user.verificationRequest,
+      role: user.role
+    });
+  } catch (error) {
+    console.error('Error fetching verification status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching verification status'
     });
   }
 });
