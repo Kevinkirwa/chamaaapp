@@ -337,7 +337,7 @@ const ChamaDetails: React.FC = () => {
         toast.error(error.response.data.message, { duration: 6000 });
         
         setTimeout(() => {
-          toast.info(`💡 Troubleshooting: ${troubleshooting.checkPhone}`, { duration: 5000 });
+          toast(`💡 Troubleshooting: ${troubleshooting.checkPhone}`, { duration: 5000 });
         }, 2000);
       } else {
         toast.error(error.response?.data?.message || 'Failed to initiate contribution');

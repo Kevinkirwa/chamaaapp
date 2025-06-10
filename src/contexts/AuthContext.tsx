@@ -28,7 +28,7 @@ const getApiBaseUrl = () => {
   }
   
   // In development, use the explicit backend URL
-  return import.meta.env.VITE_API_URL || 'https://chamaaapp.onrender.com/';
+  return import.meta.env.VITE_API_URL || 'http://localhost:3002';
 };
 
 const API_BASE_URL = getApiBaseUrl();

@@ -11,7 +11,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'https://chamaaapp.onrender.com/',
+        target: 'http://localhost:3002',
         changeOrigin: true,
         secure: false,
       }
@@ -34,7 +34,7 @@ export default defineConfig({
     port: 4173,
     proxy: {
       '/api': {
-        target: 'https://chamaaapp.onrender.com/',
+        target: 'http://localhost:3002',
         changeOrigin: true,
         secure: false,
       }

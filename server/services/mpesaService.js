@@ -418,16 +418,14 @@ class MPESAService {
           $inc: { currentCycleAmount: amount || contribution.amount }
         });
 
-        // Check if all members have contributed for this cycle
-        await this.checkAndProcessPayout(contribution.chama, contribution.cycle);
-
+        // Check if the chama cycle is complete and initiate payout
+        this.checkAndProcessPayout(contribution.chama, contribution.cycle);
       } else {
-        // Payment failed or cancelled - Enhanced error handling with Safaricom result codes
-        contribution.status = 'failed';
-        
-        // Provide specific failure reasons based on Safaricom result codes
-        let failureReason = ResultDesc;
+        // Payment failed or was cancelled by the user
+        let failureReason = ResultDesc; // Initialize with the default description
         let userFriendlyMessage = ResultDesc;
+        
+        contribution.status = 'failed'; // Default to failed
 
         switch (ResultCode) {
           case 1032:
@@ -473,9 +471,7 @@ class MPESAService {
         }
 
         contribution.failureReason = failureReason;
-        
-        // Set transaction date even for failed payments (for tracking)
-        contribution.transactionDate = new Date();
+        contribution.transactionDate = new Date(); // Mark the time of failure
         
         await contribution.save();
 
