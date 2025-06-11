@@ -16,7 +16,7 @@ const chamaSchema = new mongoose.Schema({
   contributionAmount: {
     type: Number,
     required: [true, 'Contribution amount is required'],
-    min: [100, 'Minimum contribution is KSh 100'],
+    min: [1, 'Minimum contribution is KSh 1'],
     max: [1000000, 'Maximum contribution is KSh 1,000,000']
   },
   admin: {

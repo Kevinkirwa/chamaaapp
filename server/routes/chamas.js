@@ -224,7 +224,7 @@ router.post('/', authenticateToken, async (req, res) => {
       });
     }
 
-    if (contributionAmount < 100) {
+    if (contributionAmount < 1) {
       return res.status(400).json({
         success: false,
         message: 'Minimum contribution amount is KSh 100'
