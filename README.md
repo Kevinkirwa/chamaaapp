@@ -303,9 +303,9 @@ curl -X POST https://chamaaapp.onrender.com/api/admin/setup-super-admin \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Super Admin",
-    "email": "admin@mchama.co.ke",
-    "phone": "254712345678",
-    "password": "SuperSecure123!"
+    "email": "kipngenokirwa@gmail.com",
+    "phone": "254794348933",
+    "password": "SuperSecure123!"  
   }'
 ```
 
@@ -419,6 +419,6 @@ For support, create an issue in the repository or contact the development team.
 **Repository**: https://github.com/Kevinkirwa/chamaa-app
 
 superadmin   kipngenokirwa@gmail.com
-password   SuperAdmin123!
+password   SuperSecure123!
 
 sign up with any account then approve using above super admin
