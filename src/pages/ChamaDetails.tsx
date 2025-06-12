@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, 
@@ -32,7 +32,9 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   RefreshCw,
-  X
+  X,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -67,6 +69,7 @@ interface Contribution {
   checkoutRequestId?: string;
   statusMessage?: string;
   nextAction?: string;
+  failureReason?: string;
 }
 
 interface Message {
@@ -119,9 +122,19 @@ const ChamaDetails: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'contributions' | 'chat'>('overview');
   const [showPaymentInfo, setShowPaymentInfo] = useState(false);
   
-  // NEW: Track pending payment
+  // Enhanced pending payment tracking
   const [pendingContribution, setPendingContribution] = useState<Contribution | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
+  const [statusCheckCount, setStatusCheckCount] = useState(0);
+  const [lastStatusCheck, setLastStatusCheck] = useState<Date | null>(null);
+
+  // Use refs to avoid infinite loops
+  const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const checkCountRef = useRef(0);
+
+  // Detect runtime environment
+  const isDev = import.meta.env.MODE !== 'production';
 
   useEffect(() => {
     if (chamaId) {
@@ -130,22 +143,156 @@ const ChamaDetails: React.FC = () => {
     }
   }, [chamaId]);
 
-  // NEW: Auto-check payment status for pending payments
+  // Clean up intervals on unmount
   useEffect(() => {
-    let statusInterval: NodeJS.Timeout;
-
-    if (pendingContribution && (pendingContribution.status === 'pending' || pendingContribution.status === 'processing')) {
-      statusInterval = setInterval(() => {
-        checkContributionStatus(pendingContribution._id);
-      }, 5000); // Check every 5 seconds
-    }
-
     return () => {
-      if (statusInterval) {
-        clearInterval(statusInterval);
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
       }
     };
-  }, [pendingContribution]);
+  }, []);
+
+  // Memoized status check function to prevent recreating on every render
+  const checkContributionStatus = useCallback(async (contributionId: string) => {
+    try {
+      setCheckingStatus(true);
+      setLastStatusCheck(new Date());
+      checkCountRef.current += 1;
+      setStatusCheckCount(checkCountRef.current);
+      
+      console.log(`🔍 Checking status for contribution: ${contributionId} (Check #${checkCountRef.current})`);
+      
+      const response = await axios.get(`/api/contributions/${contributionId}/status`);
+      if (response.data.success) {
+        const updatedContribution = response.data.contribution;
+        
+        console.log(`📊 Status check result:`, {
+          status: updatedContribution.status,
+          mpesaCode: updatedContribution.mpesaCode,
+          failureReason: updatedContribution.failureReason
+        });
+        
+        // Update pending contribution
+        setPendingContribution(updatedContribution);
+        
+        // If status changed to final state, handle accordingly
+        if (['completed', 'failed', 'cancelled'].includes(updatedContribution.status)) {
+          console.log(`✅ Payment reached final status: ${updatedContribution.status}`);
+          
+          // Clear intervals immediately
+          if (statusIntervalRef.current) {
+            clearInterval(statusIntervalRef.current);
+            statusIntervalRef.current = null;
+          }
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+          }
+          
+          // Show appropriate message
+          if (updatedContribution.status === 'completed') {
+            toast.success(`🎉 Payment completed successfully! M-PESA Code: ${updatedContribution.mpesaCode}`, {
+              duration: 8000
+            });
+          } else if (updatedContribution.status === 'cancelled') {
+            toast.error('❌ Payment was cancelled by user on phone', {
+              duration: 6000
+            });
+          } else if (updatedContribution.status === 'failed') {
+            const reason = updatedContribution.failureReason || 'Unknown error';
+            toast.error(`❌ Payment failed: ${reason}`, {
+              duration: 8000
+            });
+          }
+          
+          // Clear pending state and reset counters
+          setPendingContribution(null);
+          setStatusCheckCount(0);
+          checkCountRef.current = 0;
+          
+          // Refresh chama details after a short delay
+          setTimeout(() => {
+            fetchChamaDetails();
+          }, 2000);
+        }
+      }
+    } catch (error: any) {
+      console.error('❌ Error checking contribution status:', error);
+      // Don't show error toast for status checks to avoid spam
+    } finally {
+      setCheckingStatus(false);
+    }
+  }, []);
+
+  // Start monitoring when pendingContribution changes
+  useEffect(() => {
+    // Clear any existing intervals
+    if (statusIntervalRef.current) {
+      clearInterval(statusIntervalRef.current);
+      statusIntervalRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+
+    if (pendingContribution && (pendingContribution.status === 'pending' || pendingContribution.status === 'processing')) {
+      console.log(`🔄 Starting status monitoring for payment: ${pendingContribution._id}`);
+      
+      // Reset counter for new payment
+      checkCountRef.current = 0;
+      setStatusCheckCount(0);
+      
+      // Check immediately
+      checkContributionStatus(pendingContribution._id);
+
+      // Set up interval - start with 5 seconds, then increase to 10 seconds after 2 minutes
+      let intervalTime = 5000; // Start with 5 seconds
+      
+      const startMonitoring = () => {
+        statusIntervalRef.current = setInterval(() => {
+          // Switch to 10 second intervals after 24 checks (2 minutes)
+          if (checkCountRef.current >= 24 && intervalTime === 5000) {
+            intervalTime = 10000;
+            console.log('🔄 Switching to 10-second intervals');
+            
+            // Clear current interval and start new one with longer interval
+            if (statusIntervalRef.current) {
+              clearInterval(statusIntervalRef.current);
+            }
+            startMonitoring();
+            return;
+          }
+          
+          checkContributionStatus(pendingContribution._id);
+        }, intervalTime);
+      };
+
+      startMonitoring();
+
+      // Stop checking after 10 minutes (M-PESA timeout + buffer)
+      timeoutRef.current = setTimeout(() => {
+        if (statusIntervalRef.current) {
+          clearInterval(statusIntervalRef.current);
+          statusIntervalRef.current = null;
+        }
+        console.log('⏰ Stopped status checking after 10 minutes');
+        toast.error('Payment monitoring stopped. Please refresh if payment was completed.');
+        
+        // Reset states
+        setPendingContribution(null);
+        setStatusCheckCount(0);
+        checkCountRef.current = 0;
+      }, 10 * 60 * 1000);
+    } else {
+      // Reset counter when no pending payment
+      setStatusCheckCount(0);
+      checkCountRef.current = 0;
+    }
+  }, [pendingContribution?.status, pendingContribution?._id, checkContributionStatus]);
 
   const fetchChamaDetails = async () => {
     try {
@@ -178,13 +325,14 @@ const ChamaDetails: React.FC = () => {
           console.log('⏳ Found pending contribution:', userPendingContribution._id);
         } else {
           setPendingContribution(null);
+          setStatusCheckCount(0);
+          checkCountRef.current = 0;
         }
         
         // Set user's receiving phone from their member data
         if (statsData.userMember) {
           setReceivingPhone(statsData.userMember.receivingPhone || user?.phone || '');
         } else {
-          // Fallback: find user in members array
           const currentUserMember = chamaData.members.find(
             (m: Member) => m.user._id === user?._id
           );
@@ -213,67 +361,14 @@ const ChamaDetails: React.FC = () => {
     }
   };
 
-  // NEW: Check contribution status
-  const checkContributionStatus = async (contributionId: string) => {
-    try {
-      setCheckingStatus(true);
-      const response = await axios.get(`/api/contributions/${contributionId}/status`);
-      if (response.data.success) {
-        const updatedContribution = response.data.contribution;
-        
-        // Update pending contribution
-        setPendingContribution(updatedContribution);
-        
-        // If status changed to completed, failed, or cancelled, refresh the page
-        if (['completed', 'failed', 'cancelled'].includes(updatedContribution.status)) {
-          console.log(`✅ Payment status changed to: ${updatedContribution.status}`);
-          
-          if (updatedContribution.status === 'completed') {
-            toast.success('🎉 Payment completed successfully!');
-          } else if (updatedContribution.status === 'cancelled') {
-            toast.error('❌ Payment was cancelled');
-          } else if (updatedContribution.status === 'failed') {
-            toast.error(`❌ Payment failed: ${updatedContribution.failureReason || 'Unknown error'}`);
-          }
-          
-          // Refresh chama details
-          setTimeout(() => {
-            fetchChamaDetails();
-          }, 1000);
-        }
-      }
-    } catch (error: any) {
-      console.error('Error checking contribution status:', error);
-    } finally {
-      setCheckingStatus(false);
-    }
-  };
-
-  // NEW: Cancel pending payment
-  const cancelPendingPayment = async () => {
-    if (!pendingContribution) return;
-
-    try {
-      const response = await axios.post(`/api/contributions/${pendingContribution._id}/cancel`);
-      if (response.data.success) {
-        toast.success('Payment cancelled successfully');
-        setPendingContribution(null);
-        fetchChamaDetails();
-      }
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to cancel payment');
-    }
-  };
-
-  // NEW: Simulate payment success (development only)
+  // Development-only simulation (removed from production UI)
   const simulatePaymentSuccess = async () => {
-    if (!pendingContribution || process.env.NODE_ENV === 'production') return;
+    if (!pendingContribution || !isDev) return;
 
     try {
       const response = await axios.post(`/api/contributions/${pendingContribution._id}/simulate-success`);
       if (response.data.success) {
         toast.success('🧪 Payment success simulated');
-        // Status will be updated by the auto-check interval
       }
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to simulate payment');
@@ -301,11 +396,12 @@ const ChamaDetails: React.FC = () => {
       });
 
       if (response.data.success) {
-        // Enhanced success message with payment info
         const { isCurrentReceiver, paymentInfo, contribution } = response.data;
         
         // Set the pending contribution for status tracking
         setPendingContribution(contribution);
+        setStatusCheckCount(0);
+        checkCountRef.current = 0;
         
         if (isCurrentReceiver) {
           toast.success(
@@ -316,9 +412,9 @@ const ChamaDetails: React.FC = () => {
           toast.success('📱 STK Push sent to your phone! Please enter your M-PESA PIN to complete the payment.', { duration: 6000 });
         }
         
-        // Show payment info modal for a few seconds
+        // Show payment info modal
         setShowPaymentInfo(true);
-        setTimeout(() => setShowPaymentInfo(false), 10000);
+        setTimeout(() => setShowPaymentInfo(false), 12000);
         
         fetchChamaDetails();
       }
@@ -332,7 +428,6 @@ const ChamaDetails: React.FC = () => {
       }
       
       if (error.response?.data?.troubleshooting) {
-        // Show detailed troubleshooting info
         const troubleshooting = error.response.data.troubleshooting;
         toast.error(error.response.data.message, { duration: 6000 });
         
@@ -350,7 +445,6 @@ const ChamaDetails: React.FC = () => {
   const handleFinalizeOrdering = async () => {
     if (!chama) return;
 
-    // Check if all members have receiving phone numbers
     const membersWithoutPhone = chama.members.filter(member => !member.receivingPhone);
     
     if (membersWithoutPhone.length > 0) {
@@ -392,7 +486,7 @@ const ChamaDetails: React.FC = () => {
         toast.success('📱 Receiving phone number updated successfully');
         setEditingPhone(false);
         fetchChamaDetails();
-        fetchMessages(); // Refresh to see the update notification
+        fetchMessages();
       }
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to update phone number');
@@ -461,7 +555,6 @@ const ChamaDetails: React.FC = () => {
     );
   }
 
-  // ENHANCED: Better member detection
   const currentUserMember = chama.members.find(m => m.user._id === user?._id);
   const isUserMember = !!currentUserMember || chama.isAdmin || chama.userIsMember;
   
@@ -477,27 +570,22 @@ const ChamaDetails: React.FC = () => {
   const totalRequired = chama.members.length;
   const isCurrentReceiver = currentReceiver?.user._id === user?._id;
 
-  // FIXED: More comprehensive check for showing contribution section
   const shouldShowContribution = () => {
-    // Must be a member
     if (!isUserMember) {
       console.log('❌ Not showing contribution: User is not a member');
       return false;
     }
     
-    // Must not have contributed this cycle
     if (hasContributedThisCycle) {
       console.log('❌ Not showing contribution: Already contributed this cycle');
       return false;
     }
     
-    // Must not have pending payment
     if (pendingContribution) {
       console.log('❌ Not showing contribution: Payment in progress');
       return false;
     }
     
-    // Chama must be started (ordering finalized)
     if (!chama.isOrderingFinalized) {
       console.log('❌ Not showing contribution: Chama not started yet');
       return false;
@@ -507,83 +595,125 @@ const ChamaDetails: React.FC = () => {
     return true;
   };
 
-  // NEW: Pending Payment Section
+  // Enhanced Pending Payment Section - No manual cancellation
   const PendingPaymentSection = () => {
     if (!pendingContribution) return null;
 
+    const getStatusMessage = () => {
+      switch (pendingContribution.status) {
+        case 'pending':
+          return 'Waiting for you to complete payment on your phone...';
+        case 'processing':
+          return 'Processing your payment with Safaricom...';
+        default:
+          return pendingContribution.statusMessage || 'Waiting for payment completion...';
+      }
+    };
+
+    const getNextAction = () => {
+      switch (pendingContribution.status) {
+        case 'pending':
+          return 'Check your phone for M-PESA STK Push notification';
+        case 'processing':
+          return 'Please wait while Safaricom processes your payment';
+        default:
+          return pendingContribution.nextAction || 'Please wait for payment confirmation';
+      }
+    };
+
+    const getTimeElapsed = () => {
+      if (!lastStatusCheck) return '';
+      const elapsed = Math.floor((Date.now() - lastStatusCheck.getTime()) / 1000);
+      return `Last checked ${elapsed}s ago`;
+    };
+
     return (
-      <div className="bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 rounded-2xl p-8 text-white shadow-2xl mb-8">
+      <div className="bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl p-8 text-white shadow-2xl mb-8">
         <div className="text-center">
           <div className="w-20 h-20 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse">
-            <Clock className="w-10 h-10 text-white" />
+            <Smartphone className="w-10 h-10 text-white" />
           </div>
           
-          <h2 className="text-3xl font-bold mb-4">⏳ PAYMENT IN PROGRESS</h2>
+          <h2 className="text-3xl font-bold mb-4">📱 WAITING FOR SAFARICOM</h2>
           
           <div className="bg-white bg-opacity-20 backdrop-blur-md rounded-2xl p-6 mb-6">
             <p className="text-xl mb-4">
-              {pendingContribution.statusMessage || 'Waiting for payment completion...'}
+              {getStatusMessage()}
             </p>
             
             <div className="text-lg text-yellow-200 mb-4">
-              <strong>Next Action:</strong> {pendingContribution.nextAction || 'Check your phone for M-PESA notification'}
+              <strong>Next Action:</strong> {getNextAction()}
             </div>
             
-            <div className="flex items-center justify-center space-x-4 text-sm">
-              <div className="flex items-center space-x-2">
-                <Smartphone className="w-4 h-4" />
+            <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+              <div className="flex items-center justify-center space-x-2">
+                <Building2 className="w-4 h-4" />
                 <span>Amount: KSh {chama.contributionAmount.toLocaleString()}</span>
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center justify-center space-x-2">
                 <Clock className="w-4 h-4" />
                 <span>Status: {pendingContribution.status}</span>
               </div>
+              <div className="flex items-center justify-center space-x-2">
+                <Wifi className="w-4 h-4" />
+                <span>Checks: {statusCheckCount}</span>
+              </div>
+              <div className="flex items-center justify-center space-x-2">
+                <RefreshCw className={`w-4 h-4 ${checkingStatus ? 'animate-spin' : ''}`} />
+                <span>{getTimeElapsed()}</span>
+              </div>
+            </div>
+
+            {/* Real-time status indicator */}
+            <div className="flex items-center justify-center space-x-2 text-sm">
+              <div className={`w-2 h-2 rounded-full ${checkingStatus ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`}></div>
+              <span>{checkingStatus ? 'Checking with Safaricom...' : 'Monitoring payment status'}</span>
             </div>
           </div>
 
-          <div className="flex justify-center space-x-4">
+          {/* Manual refresh button only */}
+          <div className="flex justify-center">
             <button
               onClick={() => checkContributionStatus(pendingContribution._id)}
               disabled={checkingStatus}
               className="flex items-center space-x-2 px-6 py-3 bg-white bg-opacity-20 text-white rounded-xl hover:bg-opacity-30 disabled:opacity-50 transition-all"
             >
               <RefreshCw className={`w-5 h-5 ${checkingStatus ? 'animate-spin' : ''}`} />
-              <span>{checkingStatus ? 'Checking...' : 'Check Status'}</span>
+              <span>{checkingStatus ? 'Checking...' : 'Check Now'}</span>
             </button>
-            
-            <button
-              onClick={cancelPendingPayment}
-              className="flex items-center space-x-2 px-6 py-3 bg-red-600 bg-opacity-80 text-white rounded-xl hover:bg-opacity-100 transition-all"
-            >
-              <X className="w-5 h-5" />
-              <span>Cancel Payment</span>
-            </button>
-            
-            {process.env.NODE_ENV !== 'production' && (
-              <button
-                onClick={simulatePaymentSuccess}
-                className="flex items-center space-x-2 px-6 py-3 bg-green-600 bg-opacity-80 text-white rounded-xl hover:bg-opacity-100 transition-all"
-              >
-                <CheckCircle className="w-5 h-5" />
-                <span>🧪 Simulate Success</span>
-              </button>
-            )}
           </div>
           
+          {/* Information about automatic monitoring */}
           <div className="mt-6 text-white text-opacity-90">
-            <p className="text-sm">
-              💡 If you cancelled the payment on your phone, click "Cancel Payment" above
-            </p>
-            <p className="text-xs mt-2">
-              Payment will automatically timeout after 5 minutes if not completed
-            </p>
+            <div className="bg-white bg-opacity-10 rounded-xl p-4">
+              <h4 className="font-bold mb-2">🔄 Automatic Monitoring Active</h4>
+              <div className="text-sm space-y-1">
+                <p>• We're automatically checking your payment status with Safaricom</p>
+                <p>• You'll be notified immediately when payment is confirmed</p>
+                <p>• No need to manually cancel - Safaricom will handle timeouts</p>
+                <p>• Payment will automatically timeout after 5 minutes if not completed</p>
+                <p>• Monitoring frequency: 5s for first 2 minutes, then 10s intervals</p>
+              </div>
+            </div>
+            
+            {isDev && (
+              <div className="mt-4 text-xs text-white text-opacity-70">
+                <p>🧪 Development Mode: Enhanced monitoring active</p>
+                <button
+                  onClick={simulatePaymentSuccess}
+                  className="mt-2 px-3 py-1 bg-green-600 bg-opacity-50 rounded text-xs hover:bg-opacity-70"
+                >
+                  Simulate Success
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
     );
   };
 
-  // ENHANCED CONTRIBUTION COMPONENT - BEAUTIFUL DESIGN WITH BUSINESS ACCOUNT EXPLANATION
+  // Enhanced Contribution Section
   const ContributionSection = () => {
     if (!shouldShowContribution()) {
       return null;
@@ -591,13 +721,11 @@ const ChamaDetails: React.FC = () => {
 
     return (
       <div className="relative overflow-hidden">
-        {/* Animated Background */}
         <div className="absolute inset-0 bg-gradient-to-br from-blue-500 via-green-500 to-teal-500 opacity-90"></div>
         <div className="absolute inset-0 bg-gradient-to-tr from-green-400 via-blue-500 to-purple-500 opacity-70 animate-pulse"></div>
         
         <div className="relative bg-white bg-opacity-10 backdrop-blur-sm rounded-3xl p-8 text-white shadow-2xl border border-white border-opacity-20 mb-8">
           <div className="text-center">
-            {/* Animated Icon */}
             <div className="relative w-24 h-24 mx-auto mb-6">
               <div className="absolute inset-0 bg-white bg-opacity-20 rounded-full animate-ping"></div>
               <div className="relative w-24 h-24 bg-white bg-opacity-30 rounded-full flex items-center justify-center">
@@ -609,7 +737,6 @@ const ChamaDetails: React.FC = () => {
               </div>
             </div>
 
-            {/* Dynamic Title */}
             <h2 className="text-4xl font-bold mb-4 animate-fade-in">
               {isCurrentReceiver ? (
                 <>🎯 YOUR GOLDEN MOMENT!</>
@@ -665,7 +792,6 @@ const ChamaDetails: React.FC = () => {
               </div>
             </div>
 
-            {/* Description */}
             <p className="text-xl mb-6 text-white text-opacity-90 leading-relaxed">
               {isCurrentReceiver ? (
                 <>
@@ -691,7 +817,6 @@ const ChamaDetails: React.FC = () => {
             {/* Enhanced Payment Form */}
             <div className="bg-white bg-opacity-20 backdrop-blur-md rounded-2xl p-6 max-w-md mx-auto border border-white border-opacity-30">
               <div className="space-y-6">
-                {/* Phone Input */}
                 <div>
                   <label className="block text-white text-sm font-medium mb-3 flex items-center justify-center space-x-2">
                     <Smartphone className="w-4 h-4" />
@@ -713,7 +838,6 @@ const ChamaDetails: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Payment Button */}
                 <button
                   onClick={handleContribution}
                   disabled={contributionLoading || !phoneNumber}
@@ -735,7 +859,6 @@ const ChamaDetails: React.FC = () => {
               </div>
             </div>
             
-            {/* Progress Info */}
             <div className="mt-6 text-white text-opacity-90">
               <div className="flex items-center justify-center space-x-6 text-sm">
                 <div className="flex items-center space-x-2">
@@ -758,7 +881,7 @@ const ChamaDetails: React.FC = () => {
     );
   };
 
-  // SUCCESS STATE - Already contributed
+  // Success Section
   const SuccessSection = () => {
     if (!hasContributedThisCycle || !chama.isOrderingFinalized) return null;
 
@@ -782,34 +905,6 @@ const ChamaDetails: React.FC = () => {
               <p className="text-blue-200 mt-2">Waiting for {totalRequired - completedContributions} more members to contribute</p>
             )}
           </div>
-        </div>
-      </div>
-    );
-  };
-
-  // DEBUG SECTION - Shows current state for troubleshooting
-  const DebugSection = () => {
-    if (process.env.NODE_ENV !== 'development') return null;
-
-    return (
-      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-        <h4 className="font-bold text-yellow-800">Debug Info:</h4>
-        <div className="text-sm text-yellow-700 mt-2">
-          <p>• User is member: {isUserMember ? '✅' : '❌'}</p>
-          <p>• Current user member object: {currentUserMember ? '✅' : '❌'}</p>
-          <p>• Chama.userIsMember: {chama.userIsMember ? '✅' : '❌'}</p>
-          <p>• Is admin: {chama.isAdmin ? '✅' : '❌'}</p>
-          <p>• Has contributed this cycle: {hasContributedThisCycle ? '✅' : '❌'}</p>
-          <p>• Has pending payment: {pendingContribution ? '✅' : '❌'}</p>
-          <p>• Chama is started: {chama.isOrderingFinalized ? '✅' : '❌'}</p>
-          <p>• Should show contribution: {shouldShowContribution() ? '✅' : '❌'}</p>
-          <p>• Current cycle: {chama.currentCycle}</p>
-          <p>• Contributions count: {contributions.length}</p>
-          <p>• User email: {user?.email}</p>
-          <p>• Member count: {chama.members.length}</p>
-          {pendingContribution && (
-            <p>• Pending payment status: {pendingContribution.status}</p>
-          )}
         </div>
       </div>
     );
@@ -856,10 +951,7 @@ const ChamaDetails: React.FC = () => {
         )}
       </div>
 
-      {/* DEBUG SECTION */}
-      <DebugSection />
-
-      {/* PAYMENT SECTIONS - ALWAYS VISIBLE WHEN NEEDED */}
+      {/* PAYMENT SECTIONS */}
       <PendingPaymentSection />
       <SuccessSection />
       <ContributionSection />
@@ -874,10 +966,10 @@ const ChamaDetails: React.FC = () => {
               <div className="text-blue-700 mt-2 space-y-2">
                 <p>📱 <strong>Step 1:</strong> STK Push sent to your phone</p>
                 <p>🔐 <strong>Step 2:</strong> Enter your M-PESA PIN to pay M-Chama business account</p>
-                <p>✅ <strong>Step 3:</strong> Payment confirmed and recorded automatically</p>
+                <p>✅ <strong>Step 3:</strong> Payment confirmed automatically by Safaricom callback</p>
                 <p>💰 <strong>Step 4:</strong> {isCurrentReceiver ? 'You receive automatic payout when everyone pays' : 'Receiver gets automatic payout when cycle completes'}</p>
                 <p>🏢 <strong>Security:</strong> All money flows through licensed M-Chama business account</p>
-                <p>📞 <strong>Callback URL:</strong> https://chamaaapp.onrender.com/api/mpesa/callback/contribution</p>
+                <p>🔄 <strong>Monitoring:</strong> We automatically track your payment status with Safaricom</p>
               </div>
             </div>
           </div>
@@ -1224,6 +1316,9 @@ const ChamaDetails: React.FC = () => {
                   )}
                   {contribution.statusMessage && (
                     <p className="text-xs text-blue-600">{contribution.statusMessage}</p>
+                  )}
+                  {contribution.failureReason && (
+                    <p className="text-xs text-red-600">Reason: {contribution.failureReason}</p>
                   )}
                 </div>
                 <div className="flex items-center space-x-2">

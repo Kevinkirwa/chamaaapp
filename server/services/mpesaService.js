@@ -194,8 +194,8 @@ class MPESAService {
 
       // FIXED: Construct callback URL properly without duplication
       const callbackBase = this.callbackUrl || 'https://chamaaapp.onrender.com';
-      // Remove any existing /api/mpesa/callback/contribution from the base URL
-      const cleanCallbackBase = callbackBase.replace(/\/api\/mpesa\/callback\/contribution$/, '');
+      // Remove any existing /api/mpesa/callback/contribution (optionally followed by a trailing slash) from the base URL
+      const cleanCallbackBase = callbackBase.replace(/\/api\/mpesa\/callback\/contribution\/?$/, '');
       const contributionCallbackUrl = `${cleanCallbackBase}/api/mpesa/callback/contribution`;
 
       // CRITICAL: Use business shortcode for PartyB (collection point)
