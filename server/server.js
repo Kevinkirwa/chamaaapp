@@ -37,7 +37,8 @@ const corsOptions = {
       'http://127.0.0.1:5173',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:4173',
-      'https://dainty-kitten-f03bb6.netlify.app'
+      'https://dainty-kitten-f03bb6.netlify.app',
+      'https://jothem.42web.io'
     ];
 
     // Add production domains if specified
